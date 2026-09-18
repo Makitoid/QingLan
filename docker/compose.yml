@@ -1,0 +1,53 @@
+services:
+  web:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.web
+    image: qinglan-web
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../.env
+    environment:
+      DATA_DIR: /app/backend/data
+    volumes:
+      - ../backend/data:/app/backend/data
+    networks:
+      - frontend
+
+  worker:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.judge
+    image: qinglan-worker
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      DATA_DIR: /app/backend/data
+      GO_JUDGE_URL: http://go-judge:5050
+    volumes:
+      - ../backend/data:/app/backend/data
+    networks:
+      - judge
+    depends_on:
+      - go-judge
+
+  go-judge:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile.gojudge
+    image: qinglan-go-judge:v1.12.3-gcc
+    restart: unless-stopped
+    privileged: true
+    shm_size: 256mb
+    volumes:
+      - /sys/fs/cgroup:/sys/fs/cgroup:rbind,rw
+    networks:
+      - judge
+
+networks:
+  frontend:
+  judge:
+    internal: true
