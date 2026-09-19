@@ -47,6 +47,11 @@ class TeacherOut(ORMModel):
     student_count: int = 0
 
 
+class GroupRef(BaseModel):
+    id: int
+    name: str
+
+
 class StudentOut(ORMModel):
     id: int
     username: str
@@ -54,6 +59,51 @@ class StudentOut(ORMModel):
     is_active: int
     created_at: str
     teachers: list[UserOut] = []
+    groups: list[GroupRef] = []
+
+
+class GroupOut(ORMModel):
+    id: int
+    name: str
+    created_at: str
+    member_count: int = 0
+
+
+class GroupCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+
+
+class GroupUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+
+
+class GroupMembersRequest(BaseModel):
+    student_ids: list[int]
+    group_ids: list[int]
+    action: Literal["add", "remove"]
+
+
+class GroupMembershipOut(BaseModel):
+    # 实际写入/删除的「学生×组」成员关系条数（幂等 add 重复提交时为 0）
+    success_count: int
+
+
+class BoundStudentOut(ORMModel):
+    id: int
+    username: str
+    display_name: str
+    is_active: int
+    groups: list[GroupRef] = []
+
+
+class BatchResetPasswordRequest(BaseModel):
+    student_ids: list[int]
+    new_password: str = Field(min_length=6)
+
+
+class BatchActiveRequest(BaseModel):
+    student_ids: list[int]
+    is_active: bool
 
 
 class BindStudentsRequest(BaseModel):
@@ -62,7 +112,9 @@ class BindStudentsRequest(BaseModel):
 
 class ImportFailure(BaseModel):
     line: int
-    content: str
+    content: str = ""
+    # 前端 types.ts 已有该字段；无法解析学号时为 None
+    username: str | None = None
     reason: str
 
 
@@ -101,6 +153,7 @@ class ProblemCreate(BaseModel):
     memory_limit_mb: int = Field(default=256, ge=16, le=2048)
     compare_mode: str = "trim"
     float_eps: float | None = None
+    group_name: str | None = Field(default=None, max_length=50)
 
 
 class ProblemUpdate(BaseModel):
@@ -112,6 +165,26 @@ class ProblemUpdate(BaseModel):
     memory_limit_mb: int | None = None
     compare_mode: str | None = None
     float_eps: float | None = None
+    group_name: str | None = None
+
+
+class ProblemDraft(BaseModel):
+    """未保存的编辑内容快照；服务端原样存 JSON，保存题目时清空。"""
+
+    title: str = ""
+    description: str = ""
+    input_format: str = ""
+    output_format: str = ""
+    time_limit_ms: int = 1000
+    memory_limit_mb: int = 256
+    compare_mode: str = "trim"
+    float_eps: float | None = None
+    group_name: str | None = None
+
+
+class ProblemDraftSavedOut(BaseModel):
+    ok: bool = True
+    draft_saved_at: str
 
 
 class ProblemOut(ORMModel):
@@ -124,6 +197,7 @@ class ProblemOut(ORMModel):
     memory_limit_mb: int
     compare_mode: str
     float_eps: float | None
+    group_name: str | None = None
     created_by: int
     created_at: str
 
@@ -156,6 +230,8 @@ class TestCaseOut(ORMModel):
 
 class ProblemDetailOut(ProblemOut):
     cases: list[TestCaseOut] = []
+    draft: ProblemDraft | None = None
+    draft_saved_at: str | None = None
 
 
 class AssignmentProblemIn(BaseModel):
@@ -269,6 +345,7 @@ class OverviewOut(BaseModel):
 
 class StudentRowOut(BaseModel):
     student_id: int
+    username: str = ""
     name: str
     submitted_count: int
     best_effective_score: float

@@ -6,17 +6,22 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from sqlalchemy import func
+from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..core import config
 from ..core.db import get_db
 from ..core.security import APIError, hash_password, require_admin
-from ..models import SiteSetting, TeacherStudent, User
-from ..schemas import (AccountCreate, BindStudentsRequest, ImportFailure,
-                       ImportResult, IsActivePatch, ResetPasswordRequest,
-                       SettingsOut, SettingsUpdate, StudentOut, TeacherOut,
-                       UserOut)
+from ..models import Group, GroupMember, SiteSetting, TeacherStudent, User
+from ..schemas import (AccountCreate, BatchActiveRequest, BatchResetPasswordRequest,
+                       BindStudentsRequest, GroupCreate, GroupMembershipOut,
+                       GroupMembersRequest, GroupOut, GroupRef, GroupUpdate,
+                       ImportFailure, ImportResult, IsActivePatch,
+                       ResetPasswordRequest, SettingsOut, SettingsUpdate,
+                       StudentOut, TeacherOut, UserOut)
+from ..services import export as export_svc
+from ..services import groups as groups_svc
 
 router = APIRouter()
 
@@ -24,6 +29,16 @@ HEX_COLOR_RE = re.compile(r"^#[0-9A-Fa-f]{6}$")
 MAX_BG_BYTES = 5 * 1024 * 1024
 ALLOWED_BG_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 BG_IMAGE_URL = "/api/settings/bg_image"
+
+# ---------- 学生导入（xlsx / txt / csv）----------
+ALLOWED_IMPORT_EXTS = {".xlsx", ".txt", ".csv"}
+MAX_IMPORT_BYTES = 5 * 1024 * 1024
+# 组别列内的多组分隔符
+GROUP_SEP_RE = re.compile(r"[、，,；;/]")
+TXT_ALT_SEP_RE = re.compile(r"[,，]")
+HEADER_FIRST_CELLS = {"学号", "学生ID"}
+# 统一中间表示：(行号, 学号, 姓名, [组别])
+ImportRow = tuple[int, str, str, list[str]]
 
 
 class StudentIdsOut(BaseModel):
@@ -184,7 +199,7 @@ def bind_teacher_students(teacher_id: int, body: BindStudentsRequest, db: Sessio
     return StudentIdsOut(student_ids=student_ids)
 
 
-def student_to_out(s: User, teachers: list[User]) -> StudentOut:
+def student_to_out(s: User, teachers: list[User], groups: list[GroupRef] | None = None) -> StudentOut:
     return StudentOut(
         id=s.id,
         username=s.username,
@@ -192,6 +207,7 @@ def student_to_out(s: User, teachers: list[User]) -> StudentOut:
         is_active=s.is_active,
         created_at=s.created_at,
         teachers=[UserOut.model_validate(t) for t in teachers],
+        groups=groups or [],
     )
 
 
@@ -206,7 +222,12 @@ def list_students(db: Session = Depends(get_db), _: User = Depends(require_admin
     teacher_map: dict[int, list[User]] = {}
     for student_id, teacher in binds:
         teacher_map.setdefault(student_id, []).append(teacher)
-    return [student_to_out(s, teacher_map.get(s.id, [])) for s in students]
+    # 分组同理一次联查构建 map，避免 N+1
+    group_map = groups_svc.groups_map_for_students(db, [s.id for s in students])
+    return [
+        student_to_out(s, teacher_map.get(s.id, []), group_map.get(s.id, []))
+        for s in students
+    ]
 
 
 @router.post("/admin/students", response_model=StudentOut)
@@ -215,58 +236,151 @@ def create_student(body: AccountCreate, db: Session = Depends(get_db), _: User =
     return student_to_out(user, [])
 
 
-def parse_csv_bytes(raw: bytes) -> str:
+def decode_text_bytes(raw: bytes) -> str:
+    """文本编码兜底：utf-8-sig → gbk（沿用既有逻辑）。"""
     for encoding in ("utf-8-sig", "gbk"):
         try:
             return raw.decode(encoding)
         except UnicodeDecodeError:
             continue
-    raise APIError(422, "INVALID_CSV_ENCODING", "CSV 编码无法识别，请使用 UTF-8 或 GBK")
+    raise APIError(422, "INVALID_CSV_ENCODING", "文件编码无法识别，请使用 UTF-8 或 GBK")
 
 
-def process_csv_rows(db: Session, text: str) -> ImportResult:
+def cell_to_text(value) -> str:
+    """xlsx 单元格 → 文本；学号常被 Excel 存成数字。"""
+    if value is None:
+        return ""
+    if isinstance(value, float) and value.is_integer():
+        return str(int(value))
+    return str(value).strip()
+
+
+def split_group_cell(cell: str) -> list[str]:
+    return groups_svc.normalize_group_names(GROUP_SEP_RE.split(cell or ""))
+
+
+def _is_header_row(cells: list[str]) -> bool:
+    return bool(cells) and cells[0].strip() in HEADER_FIRST_CELLS
+
+
+def _iter_delimited_cells(filename: str, text: str):
+    """txt/csv → (行号, 前 3 列文本, 原始内容)。空行静默跳过（v2.0 行为变更）。"""
+    is_csv = Path(filename).suffix.lower() == ".csv"
+    for idx, line in enumerate(text.splitlines(), start=1):
+        if not line.strip():
+            continue
+        if is_csv:
+            cells = line.split(",")
+        elif "|" in line:
+            cells = line.split("|")
+        else:
+            cells = TXT_ALT_SEP_RE.split(line)
+        cells = [c.strip() for c in cells]
+        # 第 3 列之后的内容并入组别列，不丢数据
+        if len(cells) > 3:
+            cells = cells[:2] + ["、".join(cells[2:])]
+        yield idx, cells, line
+
+
+def _iter_xlsx_cells(raw: bytes):
+    openpyxl = export_svc.load_openpyxl()
+    from io import BytesIO
+
+    try:
+        wb = openpyxl.load_workbook(BytesIO(raw), read_only=True, data_only=True)
+    except Exception:
+        raise APIError(422, "INVALID_XLSX", "Excel 文件无法解析，请另存为标准 .xlsx")
+    try:
+        ws = wb.worksheets[0]  # 只取第一个 sheet 的前 3 列
+        for idx, row in enumerate(ws.iter_rows(min_col=1, max_col=3, values_only=True), start=1):
+            cells = [cell_to_text(v) for v in (list(row) + ["", "", ""])[:3]]
+            if not any(cells):
+                continue
+            yield idx, cells, " | ".join(c for c in cells if c)
+    finally:
+        wb.close()
+
+
+def parse_import_file(filename: str, raw: bytes) -> tuple[list[ImportRow], list[ImportFailure]]:
+    """三种格式统一解析成中间表示；行不合法的进 failures，且绝不解析其组别（无副作用）。"""
+    ext = Path(filename or "").suffix.lower()
+    if ext not in ALLOWED_IMPORT_EXTS:
+        raise APIError(415, "UNSUPPORTED_FILE_TYPE", "仅支持 xlsx / txt / csv 格式")
+    if len(raw) > MAX_IMPORT_BYTES:
+        raise APIError(413, "FILE_TOO_LARGE", "导入文件超过 5MB 限制")
+    if not raw:
+        raise APIError(422, "EMPTY_FILE", "导入文件为空")
+
+    cells_iter = _iter_xlsx_cells(raw) if ext == ".xlsx" else _iter_delimited_cells(filename, decode_text_bytes(raw))
+
+    rows: list[ImportRow] = []
     failures: list[ImportFailure] = []
-    success_count = 0
+    for idx, cells, content in cells_iter:
+        if _is_header_row(cells):
+            continue
+        username = cells[0] if cells else ""
+        display_name = cells[1] if len(cells) > 1 else ""
+        if not username or not display_name:
+            failures.append(ImportFailure(line=idx, content=content, username=username or None,
+                                          reason="字段缺失"))
+            continue
+        group_names = split_group_cell(cells[2]) if len(cells) > 2 else []
+        rows.append((idx, username, display_name, group_names))
+    return rows, failures
+
+
+def process_import_rows(db: Session, rows: list[ImportRow],
+                        failures: list[ImportFailure] | None = None) -> ImportResult:
+    """落库：先全量校验（重名学号），再建组、建学生、建成员关系，整批单事务 commit。"""
+    failures = list(failures or [])
     existing = {row[0] for row in db.query(User.username).all()}
     seen: set[str] = set()
-    for idx, line in enumerate(text.splitlines(), start=1):
-        if idx == 1 and line.strip() in ("学号,姓名", "学号, 姓名"):
-            continue
-        if not line.strip():
-            failures.append(ImportFailure(line=idx, content=line, reason="空行"))
-            continue
-        parts = line.split(",")
-        if len(parts) < 2:
-            failures.append(ImportFailure(line=idx, content=line, reason="字段缺失"))
-            continue
-        username = parts[0].strip()
-        display_name = parts[1].strip()
-        if not username or not display_name:
-            failures.append(ImportFailure(line=idx, content=line, reason="字段缺失"))
-            continue
+    valid: list[ImportRow] = []
+    for line_no, username, display_name, group_names in rows:
         if username in existing or username in seen:
-            failures.append(ImportFailure(line=idx, content=line, reason="学号重复"))
+            failures.append(ImportFailure(line=line_no, content=f"{username},{display_name}",
+                                          username=username, reason="学号重复"))
             continue
         seen.add(username)
-        db.add(
-            User(
-                username=username,
-                password_hash=hash_password(username),
-                role="student",
-                display_name=display_name,
-            )
+        valid.append((line_no, username, display_name, group_names))
+
+    if not valid:
+        db.commit()
+        return ImportResult(success_count=0, failures=sorted(failures, key=lambda f: f.line))
+
+    # 合法行的组别才可能自动建组
+    groups_by_name = {
+        g.name: g for g in groups_svc.ensure_groups(
+            db, [name for _, _, _, names in valid for name in names]
         )
-        success_count += 1
-    db.commit()
-    return ImportResult(success_count=success_count, failures=failures)
+    }
+    created: list[tuple[User, list[str]]] = []
+    for _line_no, username, display_name, group_names in valid:
+        user = User(
+            username=username,
+            password_hash=hash_password(username),
+            role="student",
+            display_name=display_name,
+        )
+        db.add(user)
+        created.append((user, group_names))
+    db.flush()
+    for user, group_names in created:
+        for name in group_names:
+            db.add(GroupMember(group_id=groups_by_name[name].id, student_id=user.id))
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise APIError(409, "IMPORT_FAILED", "导入写入冲突，整批学生未导入")
+    return ImportResult(success_count=len(created), failures=sorted(failures, key=lambda f: f.line))
 
 
 @router.post("/admin/students/import", response_model=ImportResult)
 async def import_students(file: UploadFile = File(...), db: Session = Depends(get_db), _: User = Depends(require_admin)):
     raw = await file.read()
-    if not raw:
-        raise APIError(422, "EMPTY_FILE", "CSV 文件为空")
-    return process_csv_rows(db, parse_csv_bytes(raw))
+    rows, failures = parse_import_file(file.filename or "", raw)
+    return process_import_rows(db, rows, failures)
 
 
 @router.patch("/admin/students/{student_id}", response_model=StudentOut)
@@ -281,13 +395,123 @@ def patch_student(student_id: int, body: IsActivePatch, db: Session = Depends(ge
         .filter(TeacherStudent.student_id == student_id)
         .all()
     )
-    return student_to_out(user, teachers)
+    group_map = groups_svc.groups_map_for_students(db, [student_id])
+    return student_to_out(user, teachers, group_map.get(student_id, []))
 
 
 @router.post("/admin/students/{student_id}/reset_password", response_model=SuccessOut)
 def reset_student_password(student_id: int, body: ResetPasswordRequest, db: Session = Depends(get_db), _: User = Depends(require_admin)):
     user = get_role_user(db, student_id, "student")
     user.password_hash = hash_password(body.new_password)
+    db.commit()
+    return SuccessOut(success=True)
+
+
+# ---------- 分组 CRUD（仅 admin）----------
+
+def group_to_out(group: Group, member_count: int) -> GroupOut:
+    return GroupOut(
+        id=group.id,
+        name=group.name,
+        created_at=group.created_at,
+        member_count=member_count,
+    )
+
+
+@router.get("/admin/groups", response_model=list[GroupOut])
+def list_groups(db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    return [group_to_out(g, count) for g, count in groups_svc.list_groups_with_count(db)]
+
+
+@router.post("/admin/groups", response_model=GroupOut)
+def create_group(body: GroupCreate, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    name = body.name.strip()
+    if not name:
+        raise APIError(422, "VALIDATION_ERROR", "分组名称不能为空")
+    if groups_svc.normalize_group_names([name]) != [name]:
+        raise APIError(422, "GROUP_NAME_INVALID", "分组名称超长或非法")
+    if db.execute(select(Group).where(Group.name == name)).scalar_one_or_none() is not None:
+        raise APIError(409, "GROUP_NAME_EXISTS", "分组名称已存在")
+    group = Group(name=name)
+    db.add(group)
+    try:
+        db.commit()
+    except IntegrityError:
+        # 并发下唯一索引兜底
+        db.rollback()
+        raise APIError(409, "GROUP_NAME_EXISTS", "分组名称已存在")
+    db.refresh(group)
+    groups_svc.remember_group_in_cache(name, group.id)
+    return group_to_out(group, 0)
+
+
+@router.patch("/admin/groups/{group_id}", response_model=GroupOut)
+def rename_group(group_id: int, body: GroupUpdate, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    group = db.get(Group, group_id)
+    if group is None:
+        raise APIError(404, "GROUP_NOT_FOUND", "分组不存在")
+    name = body.name.strip()
+    if not name:
+        raise APIError(422, "VALIDATION_ERROR", "分组名称不能为空")
+    clash = db.execute(select(Group).where(Group.name == name, Group.id != group_id)).scalar_one_or_none()
+    if clash is not None:
+        raise APIError(409, "GROUP_NAME_EXISTS", "分组名称已存在")
+    groups_svc.forget_group_in_cache(group.id)
+    group.name = name
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise APIError(409, "GROUP_NAME_EXISTS", "分组名称已存在")
+    db.refresh(group)
+    groups_svc.remember_group_in_cache(name, group.id)
+    count = db.scalar(
+        select(func.count(GroupMember.student_id)).where(GroupMember.group_id == group.id)
+    )
+    return group_to_out(group, count or 0)
+
+
+@router.delete("/admin/groups/{group_id}", response_model=SuccessOut)
+def delete_group(group_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    group = db.get(Group, group_id)
+    if group is None:
+        raise APIError(404, "GROUP_NOT_FOUND", "分组不存在")
+    # 显式清成员关系，不依赖连接的 foreign_keys 开关
+    db.query(GroupMember).filter(GroupMember.group_id == group_id).delete()
+    db.delete(group)
+    db.commit()
+    groups_svc.forget_group_in_cache(group_id)
+    return SuccessOut(success=True)
+
+
+# ---------- 学生批量操作（仅 admin；密码能力只存在于 admin 端）----------
+
+@router.post("/admin/students/group_members", response_model=GroupMembershipOut)
+def batch_group_members(body: GroupMembersRequest, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    students = groups_svc.validate_student_ids(db, body.student_ids)
+    changed = groups_svc.apply_membership(
+        db, [s.id for s in students], body.group_ids, body.action
+    )
+    return GroupMembershipOut(success_count=changed)
+
+
+@router.post("/admin/students/batch_reset_password", response_model=SuccessOut)
+def batch_reset_password(body: BatchResetPasswordRequest, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    users = groups_svc.validate_student_ids(db, body.student_ids)
+    # N 个学生共用一次 bcrypt（cost=12 约 250ms/次），整批仍是一个事务
+    password_hash = hash_password(body.new_password)
+    for user in users:
+        user.password_hash = password_hash
+    db.commit()
+    return SuccessOut(success=True)
+
+
+@router.post("/admin/students/batch_active", response_model=SuccessOut)
+def batch_active(body: BatchActiveRequest, db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    users = groups_svc.validate_student_ids(db, body.student_ids)
+    flag = 1 if body.is_active else 0
+    for user in users:
+        user.is_active = flag
     db.commit()
     return SuccessOut(success=True)
 
