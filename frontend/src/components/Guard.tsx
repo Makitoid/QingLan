@@ -2,13 +2,13 @@ import { Navigate, Outlet } from 'react-router-dom';
 import { getToken, getStoredUser } from '../api/client';
 import type { Role } from '../api/types';
 
-export function RequireAuth({ roles }: { roles: Role[] }) {
+export function RequireAuth({ roles }: { roles?: Role[] }) {
   const token = getToken();
   const user = getStoredUser();
   if (!token || !user) {
     return <Navigate to="/login" replace />;
   }
-  if (!roles.includes(user.role)) {
+  if (roles && !roles.includes(user.role)) {
     return <Navigate to="/403" replace />;
   }
   return <Outlet />;

@@ -4,7 +4,6 @@ import { useNavigate } from 'react-router-dom';
 import {
   Button,
   Card,
-  CardHeader,
   Field,
   Input,
   Label,
@@ -17,7 +16,7 @@ import {
 import { setAuth } from '../api/client';
 import { login } from '../api';
 import { errMessage } from '../components/StateViews';
-import { BackgroundLayers } from '../components/BackgroundLayers';
+import { LoginBackdrop } from '../components/LoginBackdrop';
 import { roleHome } from '../components/Guard';
 
 export function LoginPage() {
@@ -49,20 +48,23 @@ export function LoginPage() {
 
   return (
     <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <BackgroundLayers />
+      <LoginBackdrop />
       <Card size="large" style={{ width: '400px', boxShadow: tokens.shadow16, padding: tokens.spacingHorizontalXXL }}>
-        <CardHeader
-          image={
-            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '100%' }}>
-              <Text as="h1" size={800} weight="bold" style={{ color: t.colorBrandForeground1 }}>
-                青蓝
-              </Text>
-              <Text size={200} style={{ color: t.colorNeutralForeground3 }}>
-                QingLan · C 语言练习与测评平台
-              </Text>
-            </div>
-          }
-        />
+        <div
+          style={{
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'center',
+            rowGap: tokens.spacingVerticalXS,
+          }}
+        >
+          <Text as="h1" size={800} weight="bold" style={{ color: t.colorBrandForeground1, margin: 0 }}>
+            青蓝
+          </Text>
+          <Text size={200} style={{ color: t.colorNeutralForeground3, margin: 0 }}>
+            QingLan · C 语言练习与测评平台
+          </Text>
+        </div>
         <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, marginTop: tokens.spacingVerticalL }}>
           {error && (
             <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>

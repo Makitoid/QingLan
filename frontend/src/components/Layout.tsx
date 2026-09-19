@@ -1,6 +1,7 @@
 import { useTheme } from '../appTheme';
 import chroma from 'chroma-js';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { useEffect } from 'react';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import {
   Avatar,
   Button,
@@ -9,15 +10,17 @@ import {
   MenuList,
   MenuPopover,
   MenuTrigger,
+  Tab,
+  TabList,
   Text,
   tokens,
 
 } from '@fluentui/react-components';
-import { SignOut24Regular, WeatherMoon24Regular, WeatherSunny24Regular } from '@fluentui/react-icons';
+import { Settings24Regular, SignOut24Regular, WeatherMoon24Regular, WeatherSunny24Regular } from '@fluentui/react-icons';
 import { clearAuth, getStoredUser } from '../api/client';
 import type { Role } from '../api/types';
-import { useThemeMode } from '../context';
-import { BackgroundLayers } from './BackgroundLayers';
+import { useSettings, useThemeMode } from '../context';
+import { BackgroundLayers, resolveBgUrl } from './BackgroundLayers';
 import { roleHome } from './Guard';
 
 const NAV_LINKS: Record<Role, { to: string; label: string }[]> = {
@@ -36,11 +39,24 @@ const NAV_LINKS: Record<Role, { to: string; label: string }[]> = {
 export function Layout() {
   const t = useTheme();
   const navigate = useNavigate();
+  const location = useLocation();
   const { isDark, setMode } = useThemeMode();
+  const { effective } = useSettings();
   const user = getStoredUser();
 
   const acrylicBg = chroma(t.colorNeutralBackground1).alpha(0.72).css();
+  const bgUrl = resolveBgUrl(effective, isDark);
+
+  // 选区与卡片毛玻璃的半透明色写在 :root，Dialog / Menu 等 portal 内容才能一并取到。
+  useEffect(() => {
+    const root = document.documentElement;
+    root.style.setProperty('--ql-surface', acrylicBg);
+    root.style.setProperty('--ql-selection', chroma(t.colorBrandBackground).alpha(0.28).css());
+  }, [acrylicBg, t.colorBrandBackground]);
+
   const links = user ? NAV_LINKS[user.role] : [];
+  const selectedTab =
+    links.find((link) => location.pathname === link.to || location.pathname.startsWith(`${link.to}/`))?.to ?? '';
 
   const handleLogout = () => {
     clearAuth();
@@ -48,7 +64,7 @@ export function Layout() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
+    <div className={bgUrl ? 'ql-has-bg' : undefined} style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       <BackgroundLayers />
       <header
         style={{
@@ -66,35 +82,22 @@ export function Layout() {
         }}
       >
         <NavLink to={user ? roleHome(user.role) : '/login'} style={{ textDecoration: 'none', color: 'inherit' }}>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            <Text as="h1" weight="bold" size={500} style={{ color: t.colorBrandForeground1 }}>
-              青蓝
-            </Text>
-            <Text size={200} style={{ color: t.colorNeutralForeground3 }}>
-              QingLan · C 语言练习与测评平台
-            </Text>
-          </div>
+          <Text as="h1" weight="bold" size={500} style={{ color: t.colorBrandForeground1 }}>
+            青蓝
+          </Text>
         </NavLink>
 
-        <nav style={{ display: 'flex', gap: tokens.spacingHorizontalMNudge, marginLeft: tokens.spacingHorizontalXL }}>
+        <TabList
+          selectedValue={selectedTab}
+          onTabSelect={(_, data) => navigate(data.value as string)}
+          style={{ marginLeft: tokens.spacingHorizontalXL }}
+        >
           {links.map((link) => (
-            <NavLink
-              key={link.to}
-              to={link.to}
-              end={link.to === '/teacher/assignments' || link.to === '/teacher/problems'}
-              style={({ isActive }) => ({
-                textDecoration: 'none',
-                padding: `${tokens.spacingVerticalXS} ${tokens.spacingHorizontalM}`,
-                borderRadius: tokens.borderRadiusMedium,
-                color: isActive ? t.colorBrandForeground1 : t.colorNeutralForeground2,
-                backgroundColor: isActive ? t.colorBrandBackground2Pressed : 'transparent',
-                fontWeight: isActive ? tokens.fontWeightSemibold : tokens.fontWeightRegular,
-              })}
-            >
+            <Tab key={link.to} value={link.to}>
               {link.label}
-            </NavLink>
+            </Tab>
           ))}
-        </nav>
+        </TabList>
 
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS }}>
           <Button
@@ -106,13 +109,22 @@ export function Layout() {
           {user && (
             <Menu>
               <MenuTrigger>
-                <Button appearance="subtle" icon={<Avatar size={28} name={user.display_name} />}>{user.display_name}</Button>
+                <Button
+                  appearance="subtle"
+                  icon={<Avatar size={28} name={user.display_name} />}
+                  style={{ gap: tokens.spacingHorizontalMNudge }}
+                >
+                  {user.display_name}
+                </Button>
               </MenuTrigger>
               <MenuPopover>
                 <MenuList>
                   <Text size={200} style={{ color: t.colorNeutralForeground3, paddingInline: tokens.spacingHorizontalSNudge }}>
                     {user.username} · {user.role === 'admin' ? '管理员' : user.role === 'teacher' ? '教师' : '学生'}
                   </Text>
+                  <MenuItem icon={<Settings24Regular />} onClick={() => navigate('/account')}>
+                    账号设置
+                  </MenuItem>
                   <MenuItem icon={<SignOut24Regular />} onClick={handleLogout}>
                     退出登录
                   </MenuItem>

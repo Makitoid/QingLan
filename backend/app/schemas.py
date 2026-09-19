@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -71,13 +73,23 @@ class ImportResult(BaseModel):
 
 class SettingsOut(BaseModel):
     brand_color: str
+    brand_color_source: str
     bg_image_url: str | None
+    bg_image_url_dark: str | None
+    bg_dual: bool
     bg_opacity: float
 
 
 class SettingsUpdate(BaseModel):
     brand_color: str | None = None
+    brand_color_source: Literal["manual", "image"] | None = None
+    bg_dual: bool | None = None
     bg_opacity: float | None = Field(default=None, ge=0, le=1)
+
+
+class PasswordChangeRequest(BaseModel):
+    old_password: str
+    new_password: str = Field(min_length=6)
 
 
 class ProblemCreate(BaseModel):

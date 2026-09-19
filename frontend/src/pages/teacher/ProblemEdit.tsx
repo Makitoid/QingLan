@@ -45,6 +45,7 @@ import type { CaseBody, CompareMode, ProblemDetail, TestCase } from '../../api/t
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, errMessage } from '../../components/StateViews';
 import { NumberInput } from '../../components/NumberInput';
+import { PageHeader } from '../../components/PageHeader';
 
 const COMPARE_OPTIONS: { value: CompareMode; label: string }[] = [
   { value: 'trim', label: 'trim · 忽略行尾空白与末尾空行（默认）' },
@@ -195,19 +196,21 @@ export function TeacherProblemEdit() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <div>
-          <Caption1>
-            <Button appearance="subtle" size="small" onClick={() => navigate('/teacher/problems')}>← 返回题库</Button>
-          </Caption1>
-          <Text as="h2" size={600} weight="semibold">编辑题目 #{data.id}</Text>
-        </div>
-        <div style={{ display: 'flex', gap: tokens.spacingHorizontalS }}>
-          <Button appearance="secondary" icon={<Delete24Regular />} onClick={handleDeleteProblem} disabled={deleting}>删除题目</Button>
-          <Button appearance="primary" icon={<Save24Regular />} onClick={handleSave} disabled={saving}>
-            {saving ? '保存中…' : '保存'}
-          </Button>
-        </div>
+      <div>
+        <Caption1>
+          <Button appearance="subtle" size="small" onClick={() => navigate('/teacher/problems')}>← 返回题库</Button>
+        </Caption1>
+        <PageHeader
+          title={<>编辑题目 #{data.id}</>}
+          actions={
+            <>
+              <Button appearance="secondary" icon={<Delete24Regular />} onClick={handleDeleteProblem} disabled={deleting}>删除题目</Button>
+              <Button appearance="primary" icon={<Save24Regular />} onClick={handleSave} disabled={saving}>
+                {saving ? '保存中…' : '保存'}
+              </Button>
+            </>
+          }
+        />
       </div>
 
       {message && (

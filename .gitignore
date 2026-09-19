@@ -1,12 +1,60 @@
-backend/data/
-backend/.venv/
+# ===== Python =====
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+build/
+develop-eggs/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 .pytest_cache/
+
+# ===== Virtual environments =====
+.venv/
+venv/
+env/
+backend/.venv/
+
+# ===== Node / Frontend =====
 node_modules/
 frontend/dist/
-.env
+frontend/.vite/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# ===== Runtime data / Database =====
+backend/data/
 *.db
 *.db-wal
 *.db-shm
+
+# ===== Local third-party binaries =====
+tools/
+
+# ===== Logs =====
+*.log
+logs/
+
+# ===== Environment / Secrets =====
+# Keep .env.example tracked; ignore real env files
+.env
+.env.local
+.env.*.local
+
+# ===== IDE / Editors =====
+.qoder/
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# ===== OS =====
+.DS_Store
+Thumbs.db
+desktop.ini

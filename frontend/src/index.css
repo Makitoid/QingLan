@@ -63,3 +63,103 @@ body {
   padding-inline-start: 1.6em;
   line-height: 1.7;
 }
+
+/* Fluent Slider 在传入 step 时会自动在轨道上绘制刻度缺口（repeating-linear-gradient 虚线轨道），
+   与 FD2 基础样式（实心轨道）不符且无官方开关，这里覆盖为实心轨道。 */
+.fui-Slider .fui-Slider__rail::before {
+  background-image: none;
+}
+
+/* Spinner 标签在非 inverted 态不写 color，只会继承 colorNeutralForeground1（近黑），统一改为中性灰。
+   圆环与弧线由 .fui-Spinner__spinner 自带令牌控制，不受影响。 */
+.fui-Spinner__label {
+  color: var(--colorNeutralForeground3);
+}
+
+/* 浏览器默认选区用系统 Highlight 色，在浅色强调色下是一整块不透明白，压住背景图。
+   --ql-selection 由 Layout 写到 :root，保证 portal 里的文本也能取到。 */
+::selection {
+  background-color: var(--ql-selection, rgba(15, 108, 189, 0.28));
+  color: inherit;
+}
+
+/* 仅在管理员设置了自定义背景图时启用（Layout 根节点挂 .ql-has-bg）。
+   两个类比 griffel 的原子类特异性更高，可覆盖 Card 默认的不透明底色。 */
+.ql-has-bg .fui-Card {
+  background-color: var(--ql-surface);
+  backdrop-filter: blur(16px) saturate(150%);
+  -webkit-backdrop-filter: blur(16px) saturate(150%);
+}
+
+/* 登录页专属背景：品牌色光斑缓慢漂移。颜色由 LoginBackdrop 注入主题令牌，此处只管形态与动画。 */
+.ql-login-bg {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.ql-aurora {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.ql-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(38px);
+  will-change: transform;
+  animation: ql-blob-drift 26s ease-in-out infinite alternate;
+}
+
+.ql-blob-1 {
+  width: 48vmax;
+  height: 48vmax;
+  top: -14vmax;
+  left: -12vmax;
+  animation-duration: 30s;
+}
+
+.ql-blob-2 {
+  width: 36vmax;
+  height: 36vmax;
+  right: -8vmax;
+  bottom: -12vmax;
+  animation-duration: 36s;
+  animation-direction: alternate-reverse;
+}
+
+.ql-blob-3 {
+  width: 26vmax;
+  height: 26vmax;
+  top: 28%;
+  left: 46%;
+  animation-duration: 24s;
+}
+
+@keyframes ql-blob-drift {
+  from {
+    transform: translate3d(0, 0, 0) scale(1);
+  }
+  to {
+    transform: translate3d(6vmax, 4vmax, 0) scale(1.16);
+  }
+}
+
+/* 手机端：模糊半径下调，减轻 GPU 负担；中间光斑左移，避免挤出可视区 */
+@media (max-width: 640px) {
+  .ql-blob {
+    filter: blur(28px);
+  }
+  .ql-blob-3 {
+    left: 28%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ql-blob {
+    animation: none;
+  }
+}

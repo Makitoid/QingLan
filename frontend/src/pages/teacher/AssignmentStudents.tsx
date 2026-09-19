@@ -21,6 +21,7 @@ import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, EmptyView } from '../../components/StateViews';
 import { fmtTime } from '../../components/time';
 import { fmtScore } from '../../components/score';
+import { PageHeader } from '../../components/PageHeader';
 
 const columns: TableColumnDefinition<AssignmentStudentRow>[] = [
   createTableColumn({ columnId: 'name', renderHeaderCell: () => '学生' }),
@@ -51,7 +52,7 @@ export function TeacherAssignmentStudents() {
             ← 返回场次总览
           </Button>
         </Caption1>
-        <Text as="h2" size={600} weight="semibold">逐学生成绩</Text>
+        <PageHeader title="逐学生成绩" />
       </div>
 
       {data && data.length === 0 ? (

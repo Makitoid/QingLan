@@ -3,9 +3,9 @@ from sqlalchemy.orm import Session
 
 from ..core.db import get_db
 from ..core.security import (APIError, create_token, get_current_user,
-                             verify_password)
+                             hash_password, verify_password)
 from ..models import User
-from ..schemas import LoginRequest, TokenResponse, UserOut
+from ..schemas import LoginRequest, PasswordChangeRequest, TokenResponse, UserOut
 
 router = APIRouter()
 
@@ -23,3 +23,13 @@ def login(body: LoginRequest, db: Session = Depends(get_db)):
 @router.get("/me", response_model=UserOut)
 def me(user: User = Depends(get_current_user)):
     return UserOut.model_validate(user)
+
+
+@router.post("/password", status_code=204)
+def change_password(body: PasswordChangeRequest, user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    if not verify_password(body.old_password, user.password_hash):
+        raise APIError(400, "BAD_OLD_PASSWORD", "当前密码不正确")
+    if body.new_password == body.old_password:
+        raise APIError(422, "SAME_PASSWORD", "新密码不能与当前密码相同")
+    user.password_hash = hash_password(body.new_password)
+    db.commit()

@@ -2,6 +2,8 @@ import { request } from './client';
 import type {
   LoginResponse,
   SiteSettings,
+  BrandColorSource,
+  BgMode,
   User,
   TeacherItem,
   StudentItem,
@@ -42,18 +44,32 @@ export function getSettings(): Promise<SiteSettings> {
   return request<SiteSettings>('/settings', { anonymous: true });
 }
 
-export function updateSettings(body: { brand_color?: string; bg_opacity?: number }): Promise<SiteSettings> {
+export function updateSettings(body: {
+  brand_color?: string;
+  brand_color_source?: BrandColorSource;
+  bg_dual?: boolean;
+  bg_opacity?: number;
+}): Promise<SiteSettings> {
   return request<SiteSettings>('/admin/settings', { method: 'PUT', body });
 }
 
-export function uploadBgImage(file: File): Promise<{ url: string }> {
+export function uploadBgImage(file: File | Blob, mode: BgMode = 'light'): Promise<{ url: string }> {
   const form = new FormData();
-  form.append('file', file);
-  return request<{ url: string }>('/admin/settings/bg_image', { method: 'POST', form });
+  form.append('file', file, file instanceof File ? file.name : `${mode}.jpg`);
+  return request<{ url: string }>(`/admin/settings/bg_image?mode=${mode}`, { method: 'POST', form });
 }
 
-export function deleteBgImage(): Promise<void> {
-  return request<void>('/admin/settings/bg_image', { method: 'DELETE' });
+export function deleteBgImage(mode: BgMode = 'light'): Promise<SiteSettings> {
+  return request<SiteSettings>(`/admin/settings/bg_image?mode=${mode}`, { method: 'DELETE' });
+}
+
+/* ---------- account ---------- */
+
+export function changePassword(oldPassword: string, newPassword: string): Promise<void> {
+  return request<void>('/auth/password', {
+    method: 'POST',
+    body: { old_password: oldPassword, new_password: newPassword },
+  });
 }
 
 /* ---------- admin: teachers ---------- */

@@ -19,7 +19,6 @@ import {
   DialogTitle,
   Field,
   Input,
-  Text,
   tokens,
 
   type TableColumnDefinition,
@@ -29,6 +28,7 @@ import { createTeacher, listTeachers, resetTeacherPassword, updateTeacherActive 
 import type { TeacherItem } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, EmptyView, errMessage } from '../../components/StateViews';
+import { PageHeader } from '../../components/PageHeader';
 
 const columns: TableColumnDefinition<TeacherItem>[] = [
   createTableColumn({ columnId: 'username', renderHeaderCell: () => '工号' }),
@@ -101,10 +101,10 @@ export function AdminTeacherList() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Text as="h2" size={600} weight="semibold">教师管理</Text>
-        <Button appearance="primary" icon={<Add24Regular />} onClick={() => setCreateOpen(true)}>新建教师</Button>
-      </div>
+      <PageHeader
+        title="教师管理"
+        actions={<Button appearance="primary" icon={<Add24Regular />} onClick={() => setCreateOpen(true)}>新建教师</Button>}
+      />
 
       {data && data.length === 0 ? (
         <EmptyView title="还没有教师账号" description="点击右上角「新建教师」创建账号。" />

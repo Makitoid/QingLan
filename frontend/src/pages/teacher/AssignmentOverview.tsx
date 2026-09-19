@@ -28,6 +28,7 @@ import { LoadingView, ErrorView, EmptyView, errMessage } from '../../components/
 import { fmtTime } from '../../components/time';
 import { fmtScore } from '../../components/score';
 import { ScoreHistogram } from '../../components/ScoreHistogram';
+import { PageHeader } from '../../components/PageHeader';
 
 const columns: TableColumnDefinition<OverviewPerProblem>[] = [
   createTableColumn({ columnId: 'title', renderHeaderCell: () => '题目' }),
@@ -83,19 +84,25 @@ export function TeacherAssignmentOverview() {
         <Caption1>
           <Button appearance="subtle" size="small" onClick={() => navigate('/teacher/assignments')}>← 返回场次列表</Button>
         </Caption1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalM, flexWrap: 'wrap' }}>
-          <Text as="h2" size={600} weight="semibold">{a.title}</Text>
-          <Badge appearance="outline" size="small">{a.mode === 'homework' ? '作业' : '测试'}</Badge>
-          {a.mode === 'test' && (
-            a.released
-              ? <Badge size="small" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>已放出</Badge>
-              : <Badge size="small" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }}>未放出</Badge>
-          )}
-        </div>
-        <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-          时间窗：{fmtTime(a.start_time)} ~ {fmtTime(a.end_time)} · 计分：{a.score_policy === 'best' ? '取最高' : '取最后'}
-          {a.max_submissions !== null ? ` · 限 ${a.max_submissions} 次提交` : ' · 不限提交次数'}
-        </Caption1>
+        <PageHeader
+          title={a.title}
+          subtitle={
+            <>
+              时间窗：{fmtTime(a.start_time)} ~ {fmtTime(a.end_time)} · 计分：{a.score_policy === 'best' ? '取最高' : '取最后'}
+              {a.max_submissions !== null ? ` · 限 ${a.max_submissions} 次提交` : ' · 不限提交次数'}
+            </>
+          }
+          actions={
+            <>
+              <Badge appearance="outline" size="small">{a.mode === 'homework' ? '作业' : '测试'}</Badge>
+              {a.mode === 'test' && (
+                a.released
+                  ? <Badge size="small" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>已放出</Badge>
+                  : <Badge size="small" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }}>未放出</Badge>
+              )}
+            </>
+          }
+        />
       </div>
 
       {canRelease && (

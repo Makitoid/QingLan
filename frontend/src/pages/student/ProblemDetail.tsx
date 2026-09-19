@@ -23,6 +23,7 @@ import {
 import { Send24Regular } from '@fluentui/react-icons';
 import { createSubmission, getStudentProblem } from '../../api';
 import type { StudentProblemDetail, StudentSubmissionSummary } from '../../api/types';
+import { PageHeader } from '../../components/PageHeader';
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, errMessage } from '../../components/StateViews';
 import { fmtTime } from '../../components/time';
@@ -102,12 +103,10 @@ export function StudentProblemPage() {
             ← 返回场次
           </Link>
         </Caption1>
-        <Text as="h2" size={600} weight="semibold">{p.title}</Text>
-        <div style={{ display: 'flex', gap: tokens.spacingHorizontalM, marginTop: tokens.spacingVerticalXS }}>
-          <Caption1 style={{ color: t.colorNeutralForeground3 }}>时间限制：{p.time_limit_ms} ms</Caption1>
-          <Caption1 style={{ color: t.colorNeutralForeground3 }}>内存限制：{p.memory_limit_mb} MB</Caption1>
-          <Caption1 style={{ color: t.colorNeutralForeground3 }}>本题满分：{p.full_score}</Caption1>
-        </div>
+        <PageHeader
+          title={p.title}
+          subtitle={<>时间限制：{p.time_limit_ms} ms · 内存限制：{p.memory_limit_mb} MB · 本题满分：{p.full_score}</>}
+        />
       </div>
 
       <Card size="medium">

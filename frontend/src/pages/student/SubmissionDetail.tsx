@@ -23,6 +23,7 @@ import {
 import { getStudentSubmission } from '../../api';
 import type { StudentSubmissionDetail, StudentSubmissionResultRow } from '../../api/types';
 import { ErrorView, errMessage } from '../../components/StateViews';
+import { PageHeader } from '../../components/PageHeader';
 import { fmtTimeWithSeconds } from '../../components/time';
 import { fmtScore } from '../../components/score';
 import { CodeEditor } from '../../components/CodeEditor';
@@ -93,30 +94,32 @@ export function StudentSubmissionPage() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalM, flexWrap: 'wrap' }}>
-        <Text as="h2" size={600} weight="semibold">提交 #{data.id}</Text>
-        {judging ? (
-          <Spinner size="tiny" label={data.status === 'pending' ? '排队中…' : '判题中…'} />
-        ) : (
-          <>
-            {data.status_text && !data.verdict && (
-              <Badge size="medium" style={{ color: t.colorNeutralForeground2, backgroundColor: t.colorNeutralBackground4 }}>
-                {data.status_text}
-              </Badge>
-            )}
-            {data.verdict && <VerdictBadge verdict={data.verdict} />}
-            {data.status === 'failed' && (
-              <Badge size="medium" style={{ color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
-                判题失败
-              </Badge>
-            )}
-            {data.score !== null && data.score !== undefined && (
-              <Text weight="semibold" style={{ color: t.colorBrandForeground1 }}>得分：{fmtScore(data.score)}</Text>
-            )}
-          </>
-        )}
-      </div>
-      <Caption1 style={{ color: t.colorNeutralForeground3 }}>提交时间：{fmtTimeWithSeconds(data.submitted_at)}</Caption1>
+      <PageHeader
+        title={<>提交 #{data.id}</>}
+        subtitle={<>提交时间：{fmtTimeWithSeconds(data.submitted_at)}</>}
+        actions={
+          judging ? (
+            <Spinner size="tiny" label={data.status === 'pending' ? '排队中…' : '判题中…'} />
+          ) : (
+            <>
+              {data.status_text && !data.verdict && (
+                <Badge size="medium" style={{ color: t.colorNeutralForeground2, backgroundColor: t.colorNeutralBackground4 }}>
+                  {data.status_text}
+                </Badge>
+              )}
+              {data.verdict && <VerdictBadge verdict={data.verdict} />}
+              {data.status === 'failed' && (
+                <Badge size="medium" style={{ color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
+                  判题失败
+                </Badge>
+              )}
+              {data.score !== null && data.score !== undefined && (
+                <Text weight="semibold" style={{ color: t.colorBrandForeground1 }}>得分：{fmtScore(data.score)}</Text>
+              )}
+            </>
+          )
+        }
+      />
 
       {data.status_text && !data.verdict && !judging && (
         <MessageBar intent="info" style={{ borderRadius: tokens.borderRadiusMedium }}>

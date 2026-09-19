@@ -87,10 +87,28 @@ def get_or_create_settings(db: Session) -> SiteSetting:
     return s
 
 
+BG_FIELD_BY_MODE = {"light": "bg_image_path", "dark": "bg_image_path_dark"}
+
+
+def bg_field(mode: str) -> str:
+    if mode not in BG_FIELD_BY_MODE:
+        raise APIError(422, "INVALID_BG_MODE", "背景图模式仅支持 light / dark")
+    return BG_FIELD_BY_MODE[mode]
+
+
+def bg_image_url(path: str, mode: str = "light") -> str:
+    # 文件名即版本号：URL 随每次上传变化，浏览器/中间层缓存不会把旧图当成新图
+    url = f"{BG_IMAGE_URL}?v={Path(path).stem}"
+    return url if mode == "light" else f"{url}&mode=dark"
+
+
 def settings_to_out(s: SiteSetting) -> SettingsOut:
     return SettingsOut(
         brand_color=s.brand_color,
-        bg_image_url=BG_IMAGE_URL if s.bg_image_path else None,
+        brand_color_source=s.brand_color_source,
+        bg_image_url=bg_image_url(s.bg_image_path) if s.bg_image_path else None,
+        bg_image_url_dark=bg_image_url(s.bg_image_path_dark, "dark") if s.bg_image_path_dark else None,
+        bg_dual=bool(s.bg_dual),
         bg_opacity=s.bg_opacity,
     )
 
@@ -280,14 +298,17 @@ def get_settings(db: Session = Depends(get_db)):
 
 
 @router.get("/settings/bg_image")
-def get_bg_image(db: Session = Depends(get_db)):
+def get_bg_image(v: str | None = None, mode: str = "light", db: Session = Depends(get_db)):
     s = db.get(SiteSetting, 1)
-    if s is None or not s.bg_image_path:
+    stored = getattr(s, bg_field(mode)) if s is not None else None
+    if not stored:
         raise APIError(404, "BG_IMAGE_NOT_FOUND", "未设置背景图")
-    path = config.BG_DIR / s.bg_image_path
+    path = config.BG_DIR / stored
     if not path.is_file():
         raise APIError(404, "BG_IMAGE_NOT_FOUND", "背景图文件不存在")
-    return FileResponse(path)
+    # 版本号正确的 URL 内容永不改变，可长期缓存；版本不符（旧标签页/旧页面）必须回源
+    cache = "public, max-age=31536000, immutable" if v == Path(stored).stem else "no-store"
+    return FileResponse(path, headers={"Cache-Control": cache})
 
 
 @router.put("/admin/settings", response_model=SettingsOut)
@@ -297,6 +318,10 @@ def update_settings(body: SettingsUpdate, db: Session = Depends(get_db), admin: 
     s = get_or_create_settings(db)
     if body.brand_color is not None:
         s.brand_color = body.brand_color
+    if body.brand_color_source is not None:
+        s.brand_color_source = body.brand_color_source
+    if body.bg_dual is not None:
+        s.bg_dual = 1 if body.bg_dual else 0
     if body.bg_opacity is not None:
         s.bg_opacity = body.bg_opacity
     s.updated_by = admin.id
@@ -307,7 +332,8 @@ def update_settings(body: SettingsUpdate, db: Session = Depends(get_db), admin: 
 
 
 @router.post("/admin/settings/bg_image", response_model=BgImageOut)
-async def upload_bg_image(file: UploadFile = File(...), db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+async def upload_bg_image(file: UploadFile = File(...), mode: str = "light", db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    field = bg_field(mode)
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_BG_EXTS:
         raise APIError(415, "UNSUPPORTED_FILE_TYPE", "仅支持 jpg/png/webp 格式")
@@ -317,27 +343,28 @@ async def upload_bg_image(file: UploadFile = File(...), db: Session = Depends(ge
     if not raw:
         raise APIError(422, "EMPTY_FILE", "图片文件为空")
     s = get_or_create_settings(db)
-    if s.bg_image_path:
-        old = config.BG_DIR / s.bg_image_path
+    if getattr(s, field):
+        old = config.BG_DIR / getattr(s, field)
         if old.is_file():
             old.unlink()
     filename = f"{uuid.uuid4().hex}{ext}"
     (config.BG_DIR / filename).write_bytes(raw)
-    s.bg_image_path = filename
+    setattr(s, field, filename)
     s.updated_by = admin.id
     s.updated_at = now_str()
     db.commit()
-    return BgImageOut(url=BG_IMAGE_URL)
+    return BgImageOut(url=bg_image_url(filename, mode))
 
 
 @router.delete("/admin/settings/bg_image", response_model=SettingsOut)
-def delete_bg_image(db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+def delete_bg_image(mode: str = "light", db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    field = bg_field(mode)
     s = get_or_create_settings(db)
-    if s.bg_image_path:
-        old = config.BG_DIR / s.bg_image_path
+    if getattr(s, field):
+        old = config.BG_DIR / getattr(s, field)
         if old.is_file():
             old.unlink()
-        s.bg_image_path = None
+        setattr(s, field, None)
         s.updated_by = admin.id
         s.updated_at = now_str()
         db.commit()

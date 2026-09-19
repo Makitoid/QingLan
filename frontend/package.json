@@ -13,6 +13,7 @@
     "@fluentui/react-components": "^9.54.0",
     "@fluentui/react-icons": "^2.0.245",
     "@uiw/react-codemirror": "^4.23.0",
+    "browser-image-compression": "^2.0.2",
     "chroma-js": "^2.6.0",
     "dayjs": "^1.11.11",
     "react": "^18.3.1",

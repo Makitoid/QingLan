@@ -21,7 +21,6 @@ import {
   MessageBar,
   MessageBarBody,
   SearchBox,
-  Text,
   tokens,
 
   type TableColumnDefinition,
@@ -31,6 +30,7 @@ import { createStudent, importStudentsCsv, listStudents, resetStudentPassword, u
 import type { ImportResult, StudentItem } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, EmptyView, errMessage } from '../../components/StateViews';
+import { PageHeader } from '../../components/PageHeader';
 
 const columns: TableColumnDefinition<StudentItem>[] = [
   createTableColumn({ columnId: 'username', renderHeaderCell: () => '学号' }),
@@ -123,27 +123,26 @@ export function AdminStudentList() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: tokens.spacingHorizontalM, flexWrap: 'wrap' }}>
-        <Text as="h2" size={600} weight="semibold">学生管理</Text>
-        <div style={{ display: 'flex', gap: tokens.spacingHorizontalS, alignItems: 'center' }}>
-          <SearchBox placeholder="按学号或姓名搜索" value={search} onChange={(_, d) => setSearch(d.value)} style={{ width: '240px' }} />
-          <Button appearance="secondary" icon={<ArrowUpload24Regular />} onClick={() => fileRef.current?.click()} disabled={busy}>
-            CSV 导入
-          </Button>
-          <input
-            ref={fileRef}
-            type="file"
-            accept=".csv,text/csv"
-            style={{ display: 'none' }}
-            onChange={(e) => void handleImportFile(e.target.files?.[0])}
-          />
-          <Button appearance="primary" icon={<Add24Regular />} onClick={() => setCreateOpen(true)}>新建学生</Button>
-        </div>
-      </div>
-
-      <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-        CSV 格式：每行「学号,姓名」，初始密码默认与学号相同（以后端实现为准）。
-      </Caption1>
+      <PageHeader
+        title="学生管理"
+        subtitle="CSV 格式：每行「学号,姓名」，初始密码默认与学号相同（以后端实现为准）。"
+        actions={
+          <>
+            <SearchBox placeholder="按学号或姓名搜索" value={search} onChange={(_, d) => setSearch(d.value)} style={{ width: '240px' }} />
+            <Button appearance="secondary" icon={<ArrowUpload24Regular />} onClick={() => fileRef.current?.click()} disabled={busy}>
+              CSV 导入
+            </Button>
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv,text/csv"
+              style={{ display: 'none' }}
+              onChange={(e) => void handleImportFile(e.target.files?.[0])}
+            />
+            <Button appearance="primary" icon={<Add24Regular />} onClick={() => setCreateOpen(true)}>新建学生</Button>
+          </>
+        }
+      />
 
       {importResult && (
         <MessageBar

@@ -20,6 +20,7 @@ import { Key24Regular, Save24Regular } from '@fluentui/react-icons';
 import { getTeacherStudents, listStudents, listTeachers, putTeacherStudents, resetTeacherPassword } from '../../api';
 import type { StudentItem } from '../../api/types';
 import { LoadingView, ErrorView, errMessage } from '../../components/StateViews';
+import { PageHeader } from '../../components/PageHeader';
 
 export function AdminTeacherDetail() {
   const { id } = useParams();
@@ -113,7 +114,7 @@ export function AdminTeacherDetail() {
         <Caption1>
           <Button appearance="subtle" size="small" onClick={() => navigate('/admin/teachers')}>← 返回教师管理</Button>
         </Caption1>
-        <Text as="h2" size={600} weight="semibold">教师详情 · {teacherName}</Text>
+        <PageHeader title={<>教师详情 · {teacherName}</>} />
       </div>
 
       {message && (

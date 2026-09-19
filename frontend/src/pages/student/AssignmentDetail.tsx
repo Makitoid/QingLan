@@ -1,12 +1,13 @@
 import { useTheme } from '../../appTheme';
 import { Link, useParams } from 'react-router-dom';
-import { Badge, Caption1, createTableColumn, DataGrid, DataGridBody, DataGridCell, DataGridHeader, DataGridHeaderCell, DataGridRow, Text, tokens, type TableColumnDefinition } from '@fluentui/react-components';
+import { Badge, Caption1, createTableColumn, DataGrid, DataGridBody, DataGridCell, DataGridHeader, DataGridHeaderCell, DataGridRow, tokens, type TableColumnDefinition } from '@fluentui/react-components';
 import { getStudentAssignment } from '../../api';
 import type { StudentAssignmentDetail as Detail, StudentAssignmentProblem } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView } from '../../components/StateViews';
 import { fmtTime } from '../../components/time';
 import { fmtScore } from '../../components/score';
+import { PageHeader } from '../../components/PageHeader';
 
 const columns: TableColumnDefinition<StudentAssignmentProblem>[] = [
   createTableColumn({ columnId: 'seq', renderHeaderCell: () => '#' }),
@@ -27,23 +28,25 @@ export function StudentAssignmentDetail() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalM }}>
-        <Text as="h2" size={600} weight="semibold">{data.title}</Text>
-        <Badge appearance="outline" size="small">{data.mode === 'homework' ? '作业' : '测试'}</Badge>
-        <Badge
-          size="small"
-          style={
-            data.state === 'ongoing'
-              ? { color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }
-              : { color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }
-          }
-        >
-          {data.state === 'ongoing' ? '进行中' : '已结束'}
-        </Badge>
-      </div>
-      <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-        时间窗：{fmtTime(data.start_time)} ~ {fmtTime(data.end_time)} · 计分策略：{data.score_policy === 'best' ? '取历次最高分' : '取最后一次提交'}
-      </Caption1>
+      <PageHeader
+        title={data.title}
+        subtitle={<>时间窗：{fmtTime(data.start_time)} ~ {fmtTime(data.end_time)} · 计分策略：{data.score_policy === 'best' ? '取历次最高分' : '取最后一次提交'}</>}
+        actions={
+          <>
+            <Badge appearance="outline" size="small">{data.mode === 'homework' ? '作业' : '测试'}</Badge>
+            <Badge
+              size="small"
+              style={
+                data.state === 'ongoing'
+                  ? { color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }
+                  : { color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }
+              }
+            >
+              {data.state === 'ongoing' ? '进行中' : '已结束'}
+            </Badge>
+          </>
+        }
+      />
 
       <DataGrid items={data.my_scores} columns={columns} focusMode="cell">
         <DataGridHeader>

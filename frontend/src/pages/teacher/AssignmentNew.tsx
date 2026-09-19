@@ -24,6 +24,7 @@ import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, errMessage } from '../../components/StateViews';
 import { toUtcString } from '../../components/time';
 import { NumberInput } from '../../components/NumberInput';
+import { PageHeader } from '../../components/PageHeader';
 
 interface SelectedProblem {
   problem_id: number;
@@ -92,7 +93,7 @@ export function TeacherAssignmentNew() {
         <Caption1>
           <Button appearance="subtle" size="small" onClick={() => navigate('/teacher/assignments')}>← 返回场次列表</Button>
         </Caption1>
-        <Text as="h2" size={600} weight="semibold">发布作业 / 测试</Text>
+        <PageHeader title="发布作业 / 测试" />
       </div>
 
       {formError && (

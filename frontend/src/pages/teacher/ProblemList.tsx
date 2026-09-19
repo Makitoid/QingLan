@@ -19,7 +19,6 @@ import {
   DialogTitle,
   Field,
   Input,
-  Text,
   tokens,
 
   type TableColumnDefinition,
@@ -30,6 +29,7 @@ import type { ProblemSummary } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, EmptyView, errMessage } from '../../components/StateViews';
 import { fmtTime } from '../../components/time';
+import { PageHeader } from '../../components/PageHeader';
 
 const COMPARE_LABELS: Record<string, string> = { exact: '精确', trim: '忽略空白', float: '浮点容差' };
 
@@ -80,10 +80,10 @@ export function TeacherProblemList() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Text as="h2" size={600} weight="semibold">题库</Text>
-        <Button appearance="primary" icon={<Add24Regular />} onClick={() => setOpen(true)}>新建题目</Button>
-      </div>
+      <PageHeader
+        title="题库"
+        actions={<Button appearance="primary" icon={<Add24Regular />} onClick={() => setOpen(true)}>新建题目</Button>}
+      />
 
       {data && data.length === 0 ? (
         <EmptyView title="题库为空" description="点击右上角「新建题目」创建第一道题。" />

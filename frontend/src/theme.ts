@@ -16,9 +16,10 @@ export function createBrandRamp(brandColor: string): BrandVariants {
   const base = chroma(brandColor);
   const lightEnd = chroma.mix(base, 'white', 0.94, 'lab');
   const darkEnd = chroma.mix(base, 'black', 0.78, 'lab');
+  // Fluent 约定 step 10 最深、step 160 最浅，因此插值必须从暗端走向亮端。
   const brandPos = 70 / 150;
   const scale = chroma
-    .scale([lightEnd.hex(), base.hex(), darkEnd.hex()])
+    .scale([darkEnd.hex(), base.hex(), lightEnd.hex()])
     .domain([0, brandPos, 1])
     .mode('lab');
   const ramp = {} as BrandVariants;

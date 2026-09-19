@@ -132,7 +132,10 @@ class SiteSetting(Base):
 
     id = Column(Integer, primary_key=True)
     brand_color = Column(Text, nullable=False, server_default=text("'#0F6CBD'"))
+    brand_color_source = Column(Text, nullable=False, server_default=text("'manual'"))
     bg_image_path = Column(Text)
+    bg_image_path_dark = Column(Text)
+    bg_dual = Column(Integer, nullable=False, server_default=text("0"))
     bg_opacity = Column(Float, nullable=False, server_default=text("0.15"))
     updated_by = Column(Integer, ForeignKey("users.id"))
     updated_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))

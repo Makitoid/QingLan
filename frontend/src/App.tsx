@@ -12,6 +12,7 @@ import { AppThemeProvider } from './appTheme';
 import { LoginPage } from './pages/Login';
 import { ForbiddenPage } from './pages/Forbidden';
 import { NotFoundPage } from './pages/NotFound';
+import { AccountPage } from './pages/Account';
 
 import { StudentAssignmentList } from './pages/student/AssignmentList';
 import { StudentAssignmentDetail } from './pages/student/AssignmentDetail';
@@ -52,6 +53,9 @@ function ThemedApp() {
           <Route element={<Layout />}>
             <Route path="/" element={<HomeRedirect />} />
             <Route path="/403" element={<ForbiddenPage />} />
+            <Route element={<RequireAuth />}>
+              <Route path="/account" element={<AccountPage />} />
+            </Route>
             <Route element={<RequireAuth roles={['student']} />}>
               <Route path="/student/assignments" element={<StudentAssignmentList />} />
               <Route path="/student/assignments/:id" element={<StudentAssignmentDetail />} />

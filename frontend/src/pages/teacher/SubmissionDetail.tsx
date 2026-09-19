@@ -29,6 +29,7 @@ import { fmtTimeWithSeconds } from '../../components/time';
 import { fmtScore } from '../../components/score';
 import { CodeEditor } from '../../components/CodeEditor';
 import { StatusBadge, VerdictBadge } from '../../components/VerdictBadge';
+import { PageHeader } from '../../components/PageHeader';
 
 const columns: TableColumnDefinition<SubmissionResultRow>[] = [
   createTableColumn({ columnId: 'seq', renderHeaderCell: () => '测试点' }),
@@ -112,23 +113,28 @@ export function TeacherSubmissionPage() {
             ← 返回逐学生表
           </Link>
         </Caption1>
-        <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalM, flexWrap: 'wrap' }}>
-          <Text as="h2" size={600} weight="semibold">提交 #{data.id}</Text>
-          <StatusBadge status={data.status} />
-          <VerdictBadge verdict={data.verdict} />
-          {data.problem_title && (
-            <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-              题目：
-              <Link to={`/teacher/problems/${data.problem_id}`} style={{ color: t.colorBrandForeground1 }}>{data.problem_title}</Link>
-            </Caption1>
-          )}
-          {data.student_name && (
-            <Caption1 style={{ color: t.colorNeutralForeground3 }}>学生：{data.student_name}</Caption1>
-          )}
-        </div>
-        <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-          提交时间：{fmtTimeWithSeconds(data.submitted_at)} · 判题时间：{fmtTimeWithSeconds(data.judged_at)}
-        </Caption1>
+        <PageHeader
+          title={<>提交 #{data.id}</>}
+          subtitle={
+            <>
+              {data.problem_title && (
+                <>
+                  题目：
+                  <Link to={`/teacher/problems/${data.problem_id}`} style={{ color: t.colorBrandForeground1 }}>{data.problem_title}</Link>
+                  {' · '}
+                </>
+              )}
+              {data.student_name && <>学生：{data.student_name} · </>}
+              提交时间：{fmtTimeWithSeconds(data.submitted_at)} · 判题时间：{fmtTimeWithSeconds(data.judged_at)}
+            </>
+          }
+          actions={
+            <>
+              <StatusBadge status={data.status} />
+              <VerdictBadge verdict={data.verdict} />
+            </>
+          }
+        />
       </div>
 
       {message && (

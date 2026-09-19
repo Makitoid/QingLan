@@ -19,9 +19,15 @@ export interface ApiErrorBody {
 
 /* ---------- settings ---------- */
 
+export type BrandColorSource = 'manual' | 'image';
+export type BgMode = 'light' | 'dark';
+
 export interface SiteSettings {
   brand_color: string;
+  brand_color_source: BrandColorSource;
   bg_image_url: string | null;
+  bg_image_url_dark: string | null;
+  bg_dual: boolean;
   bg_opacity: number;
 }
 

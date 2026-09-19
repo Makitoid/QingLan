@@ -7,6 +7,7 @@ import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, EmptyView } from '../../components/StateViews';
 import { fmtTime } from '../../components/time';
 import { fmtScore } from '../../components/score';
+import { PageHeader } from '../../components/PageHeader';
 
 const columns: TableColumnDefinition<StudentAssignmentItem>[] = [
   createTableColumn({ columnId: 'title', renderHeaderCell: () => '场次' }),
@@ -25,7 +26,7 @@ export function StudentAssignmentList() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
-      <Text as="h2" size={600} weight="semibold">我的场次</Text>
+      <PageHeader title="我的场次" />
       {data && data.length === 0 ? (
         <EmptyView title="暂无场次" description="老师发布作业或测试后会出现在这里。" />
       ) : (

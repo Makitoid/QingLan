@@ -41,6 +41,7 @@ services:
     image: qinglan-go-judge:v1.12.3-gcc
     restart: unless-stopped
     privileged: true
+    cgroup: host
     shm_size: 256mb
     volumes:
       - /sys/fs/cgroup:/sys/fs/cgroup:rbind,rw

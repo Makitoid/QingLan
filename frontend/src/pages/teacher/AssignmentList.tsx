@@ -15,7 +15,6 @@ import {
   MenuList,
   MenuPopover,
   MenuTrigger,
-  Text,
   tokens,
 
   type TableColumnDefinition,
@@ -26,6 +25,7 @@ import type { AssignmentSummary } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, EmptyView, errMessage } from '../../components/StateViews';
 import { fmtTime } from '../../components/time';
+import { PageHeader } from '../../components/PageHeader';
 
 const columns: TableColumnDefinition<AssignmentSummary>[] = [
   createTableColumn({ columnId: 'title', renderHeaderCell: () => '标题' }),
@@ -56,12 +56,14 @@ export function TeacherAssignmentList() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-        <Text as="h2" size={600} weight="semibold">场次管理</Text>
-        <Button appearance="primary" icon={<Add24Regular />} onClick={() => navigate('/teacher/assignments/new')}>
-          发布作业 / 测试
-        </Button>
-      </div>
+      <PageHeader
+        title="场次管理"
+        actions={
+          <Button appearance="primary" icon={<Add24Regular />} onClick={() => navigate('/teacher/assignments/new')}>
+            发布作业 / 测试
+          </Button>
+        }
+      />
 
       {data && data.length === 0 ? (
         <EmptyView title="还没有场次" description="点击右上角发布第一个作业或测试。" />
