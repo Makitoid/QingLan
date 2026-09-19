@@ -581,6 +581,7 @@ class TestBatchResetPassword:
 
     def test_invalid_batch_rejected_before_any_hashing(self, client, db, h_admin, admin_user, monkeypatch):
         students = seed_students(db, 3, prefix="q")
+        before_hashes = {s.id: s.password_hash for s in students}
         calls = []
         real_hash = admin_api.hash_password
         monkeypatch.setattr(admin_api, "hash_password", lambda pw: calls.append(pw) or real_hash(pw))
@@ -592,8 +593,8 @@ class TestBatchResetPassword:
         assert code_of(resp) == "INVALID_STUDENT_IDS"
         assert calls == []
         fresh(db)
-        for student in students:
-            assert db.get(User, student.id).password_hash == student.password_hash
+        # 整批拒绝：没有任何一行的密码被动过
+        assert {db.get(User, sid).password_hash for sid in before_hashes} == set(before_hashes.values())
         # 密码太短：schema 层 422
         short = client.post("/api/admin/students/batch_reset_password", headers=h_admin,
                             json={"student_ids": [students[0].id], "new_password": "123"})
