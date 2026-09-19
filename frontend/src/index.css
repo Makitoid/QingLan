@@ -84,11 +84,12 @@ body {
 }
 
 /* 仅在管理员设置了自定义背景图时启用（Layout 根节点挂 .ql-has-bg）。
-   两个类比 griffel 的原子类特异性更高，可覆盖 Card 默认的不透明底色。 */
+   两个类比 griffel 的原子类特异性更高，可覆盖 Card 默认的不透明底色。
+   模糊半径对齐 Win11 Mica/Acrylic 观感：背景图被彻底化成色雾，只透出色调与明暗，不抢内容。 */
 .ql-has-bg .fui-Card {
   background-color: var(--ql-surface);
-  backdrop-filter: blur(16px) saturate(150%);
-  -webkit-backdrop-filter: blur(16px) saturate(150%);
+  backdrop-filter: blur(60px) saturate(150%);
+  -webkit-backdrop-filter: blur(60px) saturate(150%);
 }
 
 /* 登录页专属背景：品牌色光斑缓慢漂移。颜色由 LoginBackdrop 注入主题令牌，此处只管形态与动画。 */

@@ -1,5 +1,5 @@
 import { useTheme } from '../../appTheme';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Badge,
@@ -104,6 +104,30 @@ export function TeacherProblemEdit() {
       setCompareMode(data.compare_mode);
       setFloatEps(data.float_eps);
     }
+  }, [data]);
+
+  const formatPairRef = useRef<HTMLDivElement | null>(null);
+
+  // 输入/输出格式并排显示，拖动其中一个的手柄时同步另一个，否则两边高度会越走越不一致。
+  useEffect(() => {
+    if (!data) return;
+    const boxes = Array.from(formatPairRef.current?.querySelectorAll('textarea') ?? []);
+    if (boxes.length < 2) return;
+    const heights = new Map(boxes.map((b) => [b, b.offsetHeight] as const));
+    const observer = new ResizeObserver((entries) => {
+      let dragged: HTMLTextAreaElement | null = null;
+      for (const entry of entries) {
+        const box = entry.target as HTMLTextAreaElement;
+        const next = box.offsetHeight;
+        if (heights.get(box) !== next) dragged = box;
+        heights.set(box, next);
+      }
+      if (!dragged) return;
+      const px = `${dragged.offsetHeight}px`;
+      for (const box of boxes) box.style.height = px;
+    });
+    boxes.forEach((b) => observer.observe(b));
+    return () => observer.disconnect();
   }, [data]);
 
   const handleSave = async () => {
@@ -228,7 +252,7 @@ export function TeacherProblemEdit() {
           <Field label="题目描述（Markdown）">
             <Textarea value={description} onChange={(_, d) => setDescription(d.value)} rows={8} resize="vertical" />
           </Field>
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: tokens.spacingHorizontalM }}>
+          <div ref={formatPairRef} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: tokens.spacingHorizontalM }}>
             <Field label="输入格式">
               <Textarea value={inputFormat} onChange={(_, d) => setInputFormat(d.value)} rows={3} resize="vertical" />
             </Field>
