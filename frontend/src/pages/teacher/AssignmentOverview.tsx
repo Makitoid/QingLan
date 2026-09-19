@@ -59,7 +59,7 @@ export function TeacherAssignmentOverview() {
   const overview = useAsync<AssignmentOverview>(() => getAssignmentOverview(assignmentId), [assignmentId]);
 
   const handleRelease = async () => {
-    if (!window.confirm('确定放出测试结果？放出后学生即可见判定与分数。')) return;
+    if (!window.confirm('确定放出考试结果？放出后学生即可见判定与分数。')) return;
     try {
       await releaseAssignment(assignmentId);
       detail.reload();
@@ -94,7 +94,7 @@ export function TeacherAssignmentOverview() {
           }
           actions={
             <>
-              <Badge appearance="outline" size="small">{a.mode === 'homework' ? '作业' : '测试'}</Badge>
+              <Badge appearance="outline" size="small">{a.mode === 'homework' ? '作业' : '考试'}</Badge>
               {a.mode === 'test' && (
                 a.released
                   ? <Badge size="small" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>已放出</Badge>
@@ -107,7 +107,7 @@ export function TeacherAssignmentOverview() {
 
       {canRelease && (
         <MessageBar intent="info" style={{ borderRadius: tokens.borderRadiusMedium }}>
-          <MessageBarBody>测试模式：当前学生不可见判定详情。结束后（已过 end_time）可放出成绩。</MessageBarBody>
+          <MessageBarBody>考试模式：当前学生不可见判定详情。结束后（已过 end_time）可放出成绩。</MessageBarBody>
           <MessageBarActions>
             <Button size="small" appearance="primary" icon={<Send24Regular />} onClick={handleRelease}>放出成绩</Button>
           </MessageBarActions>

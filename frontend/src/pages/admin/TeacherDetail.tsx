@@ -1,5 +1,5 @@
 import { useTheme } from '../../appTheme';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Button,
@@ -7,10 +7,12 @@ import {
   Card,
   CardHeader,
   Checkbox,
+  Dropdown,
   Field,
   Input,
   MessageBar,
   MessageBarBody,
+  Option,
   SearchBox,
   Text,
   tokens,
@@ -34,6 +36,7 @@ export function AdminTeacherDetail() {
   const [students, setStudents] = useState<StudentItem[]>([]);
   const [boundIds, setBoundIds] = useState<Set<number>>(new Set());
   const [search, setSearch] = useState('');
+  const [pickedGroup, setPickedGroup] = useState('');
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ intent: 'success' | 'error'; text: string } | null>(null);
   const [newPassword, setNewPassword] = useState('');
@@ -67,6 +70,36 @@ export function AdminTeacherDetail() {
       if (checked) next.add(studentId);
       else next.delete(studentId);
       return next;
+    });
+  };
+
+  // 「按组添加」的选项由本页已加载的学生 groups 前端聚合，不需要额外接口。
+  // 与下方复选框保持一致：已停用的学生不参与绑定，所以也不并入。
+  const groupOptions = useMemo(() => {
+    const byId = new Map<number, { id: number; name: string; studentIds: number[] }>();
+    students.forEach((s) => {
+      if (!s.is_active) return;
+      s.groups.forEach((g) => {
+        const found = byId.get(g.id);
+        if (found) found.studentIds.push(s.id);
+        else byId.set(g.id, { id: g.id, name: g.name, studentIds: [s.id] });
+      });
+    });
+    return Array.from(byId.values()).sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+  }, [students]);
+
+  const handleAddByGroup = (groupId: string) => {
+    const group = groupOptions.find((g) => String(g.id) === groupId);
+    // 选完即回落到占位文案：这是一个「动作」，不是持久的筛选条件。
+    setPickedGroup('');
+    if (!group) return;
+    const next = new Set(boundIds);
+    const added = group.studentIds.filter((id) => !next.has(id));
+    group.studentIds.forEach((id) => next.add(id));
+    setBoundIds(next);
+    setMessage({
+      intent: 'success',
+      text: `已并入分组「${group.name}」的 ${group.studentIds.length} 名学生，新增 ${added.length} 人，当前已选 ${next.size} 人；点「保存绑定」后生效。`,
     });
   };
 
@@ -148,12 +181,42 @@ export function AdminTeacherDetail() {
         <Caption1 style={{ color: t.colorNeutralForeground3 }}>
           场次受众 = 当前绑定的学生（动态计算）。保存为全量覆盖：未勾选的学生将被解绑。
         </Caption1>
-        <SearchBox
-          placeholder="按学号或姓名搜索"
-          value={search}
-          onChange={(_, d) => setSearch(d.value)}
-          style={{ marginTop: tokens.spacingVerticalS, maxWidth: '320px' }}
-        />
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'flex-end',
+            flexWrap: 'wrap',
+            gap: tokens.spacingHorizontalS,
+            marginTop: tokens.spacingVerticalS,
+          }}
+        >
+          <SearchBox
+            placeholder="按学号或姓名搜索"
+            value={search}
+            onChange={(_, d) => setSearch(d.value)}
+            style={{ maxWidth: '320px' }}
+          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalSNudge }}>
+            <Caption1 style={{ color: t.colorNeutralForeground3 }}>按组添加</Caption1>
+            <Dropdown
+              placeholder={groupOptions.length === 0 ? '学生还没有分组' : '选择一个分组，并入其成员'}
+              value={groupOptions.find((g) => String(g.id) === pickedGroup)?.name}
+              selectedOptions={pickedGroup ? [pickedGroup] : []}
+              onOptionSelect={(_, d) => handleAddByGroup(String(d.optionValue ?? ''))}
+              disabled={busy || groupOptions.length === 0}
+              style={{ width: '240px' }}
+            >
+              {groupOptions.map((g) => (
+                <Option key={g.id} value={String(g.id)}>
+                  {`${g.name}（${g.studentIds.length} 人）`}
+                </Option>
+              ))}
+            </Dropdown>
+          </div>
+        </div>
+        <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+          「按组添加」把该组学生并入当前选择（自动去重，已停用的学生不并入），仍需点「保存绑定」才生效。
+        </Caption1>
         <div
           style={{
             display: 'grid',

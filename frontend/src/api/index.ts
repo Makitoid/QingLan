@@ -1,4 +1,5 @@
-import { request } from './client';
+import dayjs from 'dayjs';
+import { downloadBlob, request } from './client';
 import type {
   LoginResponse,
   SiteSettings,
@@ -13,6 +14,12 @@ import type {
   ProblemSummary,
   ProblemDetail,
   ProblemBody,
+  ProblemDraft,
+  GroupItem,
+  GroupMembershipAction,
+  BoundStudentItem,
+  BatchResult,
+  SuccessResult,
   TestCase,
   CaseBody,
   AssignmentSummary,
@@ -108,7 +115,7 @@ export function createStudent(body: CreateStudentBody): Promise<StudentItem> {
   return request<StudentItem>('/admin/students', { method: 'POST', body });
 }
 
-export function importStudentsCsv(file: File): Promise<ImportResult> {
+export function importStudents(file: File): Promise<ImportResult> {
   const form = new FormData();
   form.append('file', file);
   return request<ImportResult>('/admin/students/import', { method: 'POST', form });
@@ -120,6 +127,81 @@ export function updateStudentActive(id: number, is_active: boolean): Promise<Stu
 
 export function resetStudentPassword(id: number, new_password: string): Promise<void> {
   return request<void>(`/admin/students/${id}/reset_password`, { method: 'POST', body: { new_password } });
+}
+
+/* ---------- admin: 学生批量操作 ---------- */
+
+/** 批量把学生加入 / 移出分组；后端单事务，整批成功或整批失败。 */
+export function adminBatchGroupMembers(
+  studentIds: number[],
+  groupIds: number[],
+  action: GroupMembershipAction,
+): Promise<BatchResult> {
+  return request<BatchResult>('/admin/students/group_members', {
+    method: 'POST',
+    body: { student_ids: studentIds, group_ids: groupIds, action },
+  });
+}
+
+/** 批量重置密码（后端只算一次 hash 复用到 N 行）。仅管理员有此接口。 */
+export function adminBatchResetPassword(studentIds: number[], newPassword: string): Promise<SuccessResult> {
+  return request<SuccessResult>('/admin/students/batch_reset_password', {
+    method: 'POST',
+    body: { student_ids: studentIds, new_password: newPassword },
+  });
+}
+
+/** 批量启用 / 停用学生账号。 */
+export function adminBatchActive(studentIds: number[], isActive: boolean): Promise<SuccessResult> {
+  return request<SuccessResult>('/admin/students/batch_active', {
+    method: 'POST',
+    body: { student_ids: studentIds, is_active: isActive },
+  });
+}
+
+/* ---------- 分组（管理员：完整 CRUD；教师端只读，见 listTeacherGroups） ---------- */
+
+export function listGroups(): Promise<GroupItem[]> {
+  return request<GroupItem[]>('/admin/groups');
+}
+
+/** 新建分组；重名返回 409 GROUP_NAME_EXISTS。 */
+export function createGroup(name: string): Promise<GroupItem> {
+  return request<GroupItem>('/admin/groups', { method: 'POST', body: { name } });
+}
+
+/** 重命名分组；404 GROUP_NOT_FOUND / 409 GROUP_NAME_EXISTS。 */
+export function renameGroup(id: number, name: string): Promise<GroupItem> {
+  return request<GroupItem>(`/admin/groups/${id}`, { method: 'PATCH', body: { name } });
+}
+
+/** 删除分组，成员关系级联删除。 */
+export function deleteGroup(id: number): Promise<void> {
+  return request<void>(`/admin/groups/${id}`, { method: 'DELETE' });
+}
+
+/* ---------- teacher: 学生与分组（教师端无任何密码相关接口） ---------- */
+
+/** 我绑定的学生（含分组）。 */
+export function listTeacherStudents(): Promise<BoundStudentItem[]> {
+  return request<BoundStudentItem[]>('/teacher/students');
+}
+
+/** 全站分组定义，教师端只读。 */
+export function listTeacherGroups(): Promise<GroupItem[]> {
+  return request<GroupItem[]>('/teacher/groups');
+}
+
+/** 批量调整自己绑定学生的组成员关系；含未绑定学生时后端 403 整批拒绝。 */
+export function teacherBatchGroupMembers(
+  studentIds: number[],
+  groupIds: number[],
+  action: GroupMembershipAction,
+): Promise<BatchResult> {
+  return request<BatchResult>('/teacher/students/group_members', {
+    method: 'POST',
+    body: { student_ids: studentIds, group_ids: groupIds, action },
+  });
 }
 
 /* ---------- teacher: problems ---------- */
@@ -142,6 +224,16 @@ export function updateTeacherProblem(id: number, body: ProblemBody): Promise<Pro
 
 export function deleteTeacherProblem(id: number): Promise<void> {
   return request<void>(`/teacher/problems/${id}`, { method: 'DELETE' });
+}
+
+/** 保存题目草稿（每题仅一份，新草稿覆盖旧草稿）；正式保存成功后由服务端清空。 */
+export function saveProblemDraft(id: number, draft: ProblemDraft): Promise<void> {
+  return request<void>(`/teacher/problems/${id}/draft`, { method: 'PUT', body: draft });
+}
+
+/** 丢弃草稿，回到已保存内容。 */
+export function deleteProblemDraft(id: number): Promise<void> {
+  return request<void>(`/teacher/problems/${id}/draft`, { method: 'DELETE' });
 }
 
 export function createCase(problemId: number, body: CaseBody): Promise<TestCase> {
@@ -184,6 +276,14 @@ export function getAssignmentOverview(id: number): Promise<AssignmentOverview> {
 
 export function getAssignmentStudents(id: number): Promise<AssignmentStudentRow[]> {
   return request<AssignmentStudentRow[]>(`/teacher/assignments/${id}/students`);
+}
+
+/**
+ * 导出场次学生成绩 xlsx（浏览器直接落盘）。
+ * tz_offset 传本地时区的分钟偏移（dayjs().utcOffset()），后端按它转换 UTC 时间。
+ */
+export function exportAssignmentStudents(id: number): Promise<void> {
+  return downloadBlob(`/teacher/assignments/${id}/export?tz_offset=${dayjs().utcOffset()}`, `学生成绩-${id}.xlsx`);
 }
 
 /* ---------- teacher: submissions ---------- */

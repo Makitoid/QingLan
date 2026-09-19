@@ -1,4 +1,5 @@
 import { useTheme } from '../../appTheme';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Badge,
@@ -15,17 +16,35 @@ import {
   MenuList,
   MenuPopover,
   MenuTrigger,
+  Tab,
+  TabList,
   tokens,
 
   type TableColumnDefinition,
 } from '@fluentui/react-components';
 import { Add24Regular, MoreHorizontal24Regular } from '@fluentui/react-icons';
 import { listTeacherAssignments, releaseAssignment } from '../../api';
-import type { AssignmentSummary } from '../../api/types';
+import type { AssignmentMode, AssignmentSummary } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, EmptyView, errMessage } from '../../components/StateViews';
 import { fmtTime } from '../../components/time';
 import { PageHeader } from '../../components/PageHeader';
+
+/**
+ * 教师侧模式文案：`test` 对学生叫「测试」，教师侧统一叫「考试」。
+ * 学生端页面（pages/student/*）与 AssignmentNew/Overview 各有自己的字面量，
+ * 不共用本常量，因此学生端「测试」文案保持原样。
+ */
+const MODE_LABEL: Record<AssignmentMode, string> = { homework: '作业', test: '考试' };
+
+/** 页内二级筛选（前端过滤，不额外请求接口）。 */
+type ModeFilter = 'all' | AssignmentMode;
+
+const MODE_TABS: { value: ModeFilter; label: string }[] = [
+  { value: 'all', label: '全部' },
+  { value: 'homework', label: MODE_LABEL.homework },
+  { value: 'test', label: MODE_LABEL.test },
+];
 
 const columns: TableColumnDefinition<AssignmentSummary>[] = [
   createTableColumn({ columnId: 'title', renderHeaderCell: () => '标题' }),
@@ -40,9 +59,17 @@ export function TeacherAssignmentList() {
   const t = useTheme();
   const navigate = useNavigate();
   const { data, error, loading, reload } = useAsync(listTeacherAssignments, []);
+  const [modeFilter, setModeFilter] = useState<ModeFilter>('all');
+
+  // 前端过滤：接口无 mode 参数，一次全量拉取后按 Tab 切换。
+  const items = useMemo(
+    () => (data ?? []).filter((item) => modeFilter === 'all' || item.mode === modeFilter),
+    [data, modeFilter],
+  );
+  const filterLabel = MODE_TABS.find((tab) => tab.value === modeFilter)?.label ?? '全部';
 
   const handleRelease = async (item: AssignmentSummary) => {
-    if (!window.confirm(`确定放出「${item.title}」的测试结果？放出后学生即可见判定与分数。`)) return;
+    if (!window.confirm(`确定放出「${item.title}」的考试结果？放出后学生即可见判定与分数。`)) return;
     try {
       await releaseAssignment(item.id);
       reload();
@@ -54,21 +81,38 @@ export function TeacherAssignmentList() {
   if (loading) return <LoadingView />;
   if (error) return <ErrorView error={error} onRetry={reload} />;
 
+  const hasAny = Boolean(data && data.length > 0);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
       <PageHeader
-        title="场次管理"
+        title="发布"
         actions={
           <Button appearance="primary" icon={<Add24Regular />} onClick={() => navigate('/teacher/assignments/new')}>
-            发布作业 / 测试
+            发布作业 / 考试
           </Button>
         }
       />
 
-      {data && data.length === 0 ? (
-        <EmptyView title="还没有场次" description="点击右上角发布第一个作业或测试。" />
+      <TabList
+        size="small"
+        selectedValue={modeFilter}
+        onTabSelect={(_, d) => setModeFilter(d.value as ModeFilter)}
+      >
+        {MODE_TABS.map((tab) => (
+          <Tab key={tab.value} value={tab.value}>
+            {tab.label}
+          </Tab>
+        ))}
+      </TabList>
+
+      {items.length === 0 ? (
+        <EmptyView
+          title={hasAny ? `当前没有「${filterLabel}」场次` : '还没有场次'}
+          description={hasAny ? '换一个筛选条件看看，或发布新的作业 / 考试。' : '点击右上角发布第一个作业或考试。'}
+        />
       ) : (
-        <DataGrid items={data ?? []} columns={columns} focusMode="cell" resizableColumns>
+        <DataGrid items={items} columns={columns} focusMode="cell" resizableColumns>
           <DataGridHeader>
             <DataGridRow>
               {({ renderHeaderCell }) => <DataGridHeaderCell>{renderHeaderCell()}</DataGridHeaderCell>}
@@ -84,7 +128,7 @@ export function TeacherAssignmentList() {
                         {item.title}
                       </Link>
                     )}
-                    {columnId === 'mode' && <Badge appearance="outline" size="small">{item.mode === 'homework' ? '作业' : '测试'}</Badge>}
+                    {columnId === 'mode' && <Badge appearance="outline" size="small">{MODE_LABEL[item.mode]}</Badge>}
                     {columnId === 'window' && (
                       <Caption1 style={{ color: t.colorNeutralForeground3 }}>
                         {fmtTime(item.start_time)} ~ {fmtTime(item.end_time)}
@@ -115,7 +159,7 @@ export function TeacherAssignmentList() {
                             <MenuItem onClick={() => navigate(`/teacher/assignments/${item.id}`)}>总览与统计</MenuItem>
                             <MenuItem onClick={() => navigate(`/teacher/assignments/${item.id}/students`)}>逐学生成绩</MenuItem>
                             {item.mode === 'test' && !item.released && (
-                              <MenuItem onClick={() => void handleRelease(item)}>放出测试结果</MenuItem>
+                              <MenuItem onClick={() => void handleRelease(item)}>放出考试结果</MenuItem>
                             )}
                           </MenuList>
                         </MenuPopover>

@@ -26,8 +26,9 @@ import { roleHome } from './Guard';
 const NAV_LINKS: Record<Role, { to: string; label: string }[]> = {
   student: [{ to: '/student/assignments', label: '我的场次' }],
   teacher: [
-    { to: '/teacher/assignments', label: '场次管理' },
+    { to: '/teacher/assignments', label: '发布' },
     { to: '/teacher/problems', label: '题库' },
+    { to: '/teacher/students', label: '学生' },
   ],
   admin: [
     { to: '/admin/teachers', label: '教师管理' },
