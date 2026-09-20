@@ -124,7 +124,7 @@ export function TeacherAssignmentStudents() {
                       <Text weight={item.submitted_count === 0 ? 'regular' : 'semibold'}>
                         {item.name}
                         {item.submitted_count === 0 && (
-                          <Badge size="small" style={{ marginLeft: tokens.spacingHorizontalS, color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
+                          <Badge size="large" style={{ marginLeft: tokens.spacingHorizontalS, color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
                             未交
                           </Badge>
                         )}

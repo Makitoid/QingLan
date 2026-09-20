@@ -130,7 +130,7 @@ export function TeacherAssignmentList() {
                         {item.title}
                       </Link>
                     )}
-                    {columnId === 'mode' && <Badge appearance="outline" size="small">{MODE_LABEL[item.mode]}</Badge>}
+                    {columnId === 'mode' && <Badge appearance="outline" size="large">{MODE_LABEL[item.mode]}</Badge>}
                     {columnId === 'window' && (
                       <Caption1 style={{ color: t.colorNeutralForeground3 }}>
                         {fmtTime(item.start_time)} ~ {fmtTime(item.end_time)}
@@ -145,8 +145,8 @@ export function TeacherAssignmentList() {
                     {columnId === 'released' && (
                       item.mode === 'test' ? (
                         item.released
-                          ? <Badge size="small" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>已放出</Badge>
-                          : <Badge size="small" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }}>未放出</Badge>
+                          ? <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>已放出</Badge>
+                          : <Badge className="ql-badge-status" size="large" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }}>未放出</Badge>
                       ) : (
                         <Caption1 style={{ color: t.colorNeutralForeground4 }}>—</Caption1>
                       )

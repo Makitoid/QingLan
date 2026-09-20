@@ -153,7 +153,7 @@ export function GroupPickerDialog({ open, onOpenChange, action, groups, studentC
                         已选 {picked.length} 个分组：
                       </Text>
                       {picked.map((g) => (
-                        <Badge key={g.id} appearance="tint" size="small">
+                        <Badge key={g.id} appearance="tint" size="large">
                           {g.name}
                         </Badge>
                       ))}

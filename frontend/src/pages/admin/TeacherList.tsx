@@ -129,8 +129,8 @@ export function AdminTeacherList() {
                     {columnId === 'student_count' && item.student_count}
                     {columnId === 'is_active' && (
                       item.is_active
-                        ? <Badge size="small" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>启用</Badge>
-                        : <Badge size="small" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }}>已停用</Badge>
+                        ? <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>启用</Badge>
+                        : <Badge className="ql-badge-status" size="large" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }}>已停用</Badge>
                     )}
                     {columnId === 'actions' && (
                       <div style={{ display: 'flex', gap: tokens.spacingHorizontalXS }}>

@@ -226,7 +226,7 @@ export function TeacherProblemList() {
                         )}
                         {columnId === 'group' && (
                           groupOf(item)
-                            ? <Badge appearance="tint" size="small">{groupOf(item)}</Badge>
+                            ? <Badge appearance="tint" size="large">{groupOf(item)}</Badge>
                             : <Caption1 style={{ color: t.colorNeutralForeground3 }}>—</Caption1>
                         )}
                         {columnId === 'limits' && (
@@ -234,7 +234,7 @@ export function TeacherProblemList() {
                             {item.time_limit_ms} ms / {item.memory_limit_mb} MB
                           </Caption1>
                         )}
-                        {columnId === 'compare_mode' && <Badge appearance="outline" size="small">{COMPARE_LABELS[item.compare_mode]}</Badge>}
+                        {columnId === 'compare_mode' && <Badge appearance="outline" size="large">{COMPARE_LABELS[item.compare_mode]}</Badge>}
                         {columnId === 'created_at' && fmtTime(item.created_at)}
                         {columnId === 'actions' && (
                           <Button

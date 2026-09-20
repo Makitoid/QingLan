@@ -103,13 +103,13 @@ export function StudentSubmissionPage() {
           ) : (
             <>
               {data.status_text && !data.verdict && (
-                <Badge size="medium" style={{ color: t.colorNeutralForeground2, backgroundColor: t.colorNeutralBackground4 }}>
+                <Badge size="large" style={{ color: t.colorNeutralForeground2, backgroundColor: t.colorNeutralBackground4 }}>
                   {data.status_text}
                 </Badge>
               )}
               {data.verdict && <VerdictBadge verdict={data.verdict} />}
               {data.status === 'failed' && (
-                <Badge size="medium" style={{ color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
+                <Badge size="large" style={{ color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
                   判题失败
                 </Badge>
               )}

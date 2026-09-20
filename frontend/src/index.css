@@ -91,6 +91,25 @@ body {
   -webkit-backdrop-filter: blur(16px) saturate(150%);
 }
 
+/* Fluent MessageBar 默认画 1px 描边，intent 变体还会把 border-color 换成状态色，
+   与青蓝「无边框色块 + 图标」的提示语言冲突。两个类名压过 Griffel 原子类的特异性。 */
+.fui-MessageBar.fui-MessageBar {
+  border-width: 0;
+}
+
+/* 表头文字在本列水平居中（单元格内容仍左对齐）。
+   表头真正的文字盒子是 th 里那个 display:flex 的 __button 槽，
+   text-align 对它无效，必须改 justify-content。 */
+.fui-DataGridHeaderCell .fui-DataGridHeaderCell__button {
+  justify-content: center;
+}
+
+/* 状态类标识统一等宽：启用 / 已停用 / 已放出 / 未放出 字数不同，
+   不给最小宽度会在同一列里参差。Badge 自带 justify-content:center，文字仍居中。 */
+.fui-Badge.ql-badge-status {
+  min-width: 56px;
+}
+
 /* 登录页专属背景：品牌色光斑缓慢漂移。颜色由 LoginBackdrop 注入主题令牌，此处只管形态与动画。 */
 .ql-login-bg {
   position: fixed;

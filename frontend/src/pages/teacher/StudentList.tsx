@@ -156,15 +156,15 @@ export function TeacherStudentList() {
                         : (
                           <div style={{ display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalXS }}>
                             {item.groups.map((g) => (
-                              <Badge key={g.id} appearance="tint" size="small">{g.name}</Badge>
+                              <Badge key={g.id} appearance="tint" size="large">{g.name}</Badge>
                             ))}
                           </div>
                         )
                     )}
                     {columnId === 'is_active' && (
                       item.is_active
-                        ? <Badge size="small" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>启用</Badge>
-                        : <Badge size="small" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }}>已停用</Badge>
+                        ? <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>启用</Badge>
+                        : <Badge className="ql-badge-status" size="large" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }}>已停用</Badge>
                     )}
                   </DataGridCell>
                 )}

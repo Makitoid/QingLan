@@ -247,7 +247,7 @@ function GroupsPanel({ onChanged, onClose }: { onChanged?: () => void; onClose: 
                   ) : (
                     <>
                       <Text weight="semibold">{group.name}</Text>
-                      <Badge appearance="outline" size="small">
+                      <Badge appearance="outline" size="large">
                         {group.member_count} 人
                       </Badge>
                       <div style={{ marginLeft: 'auto', display: 'flex', gap: tokens.spacingHorizontalXS }}>

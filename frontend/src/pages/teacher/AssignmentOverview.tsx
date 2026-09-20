@@ -94,11 +94,11 @@ export function TeacherAssignmentOverview() {
           }
           actions={
             <>
-              <Badge appearance="outline" size="small">{a.mode === 'homework' ? '作业' : '考试'}</Badge>
+              <Badge appearance="outline" size="large">{a.mode === 'homework' ? '作业' : '考试'}</Badge>
               {a.mode === 'test' && (
                 a.released
-                  ? <Badge size="small" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>已放出</Badge>
-                  : <Badge size="small" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }}>未放出</Badge>
+                  ? <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>已放出</Badge>
+                  : <Badge className="ql-badge-status" size="large" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }}>未放出</Badge>
               )}
             </>
           }

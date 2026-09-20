@@ -382,7 +382,7 @@ export function TeacherProblemEdit() {
           title={
             <>
               编辑题目 #{data.id}
-              {dirty && <Badge appearance="tint" size="small" style={{ marginLeft: tokens.spacingHorizontalS }}>未保存</Badge>}
+              {dirty && <Badge appearance="tint" size="large" style={{ marginLeft: tokens.spacingHorizontalS }}>未保存</Badge>}
             </>
           }
           actions={
@@ -492,8 +492,8 @@ export function TeacherProblemEdit() {
                     {columnId === 'seq' && item.seq}
                     {columnId === 'kind' && (
                       item.is_sample
-                        ? <Badge size="small" style={{ color: t.colorBrandForeground1, backgroundColor: t.colorBrandBackground2 }}>样例</Badge>
-                        : <Badge size="small" appearance="outline">隐藏</Badge>
+                        ? <Badge size="large" style={{ color: t.colorBrandForeground1, backgroundColor: t.colorBrandBackground2 }}>样例</Badge>
+                        : <Badge size="large" appearance="outline">隐藏</Badge>
                     )}
                     {columnId === 'weight' && item.weight}
                     {columnId === 'input' && (
@@ -533,15 +533,10 @@ export function TeacherProblemEdit() {
       >
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>检测到未保存的草稿</DialogTitle>
+            <DialogTitle>检测到未保存的草稿，是否使用草稿内容？</DialogTitle>
             <DialogContent>
               <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
-                <Caption1>
-                  检测到未保存的草稿（保存于 {fmtTimeWithSeconds(pendingDraft?.savedAt)}，已按本地时区显示）。
-                </Caption1>
-                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-                  「使用草稿」把草稿内容填入表单；「放弃草稿」删除服务器上的草稿，继续编辑上次已保存的内容。
-                </Caption1>
+                <Caption1>草稿保存于 {fmtTimeWithSeconds(pendingDraft?.savedAt)}（本地时区）。</Caption1>
                 {draftError && (
                   <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
                     <MessageBarBody>{draftError}</MessageBarBody>
@@ -550,8 +545,8 @@ export function TeacherProblemEdit() {
               </div>
             </DialogContent>
             <DialogActions>
-              <Button appearance="secondary" onClick={handleDiscardDraft} disabled={draftBusy}>放弃草稿</Button>
-              <Button appearance="primary" onClick={handleUseDraft} disabled={draftBusy}>使用草稿</Button>
+              <Button appearance="secondary" onClick={handleDiscardDraft} disabled={draftBusy}>放弃</Button>
+              <Button appearance="primary" onClick={handleUseDraft} disabled={draftBusy}>是</Button>
             </DialogActions>
           </DialogBody>
         </DialogSurface>

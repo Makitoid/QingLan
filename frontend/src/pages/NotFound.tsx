@@ -17,16 +17,29 @@ const useStyles = makeStyles({
     paddingInline: tokens.spacingHorizontalM,
   },
   card: {
+    // 三段式：上下两条 1fr 轨道等分剩余空间，404 就精确落在卡片的垂直中线上。
+    // 罗盘与文案分别贴到各自轨道的内侧边缘，空隙全部推到卡片上下两端。
+    display: 'grid',
+    gridTemplateRows: '1fr auto 1fr',
+    justifyItems: 'center',
+    // Card 自带 12px gap，会和下面两条 8px 外边距叠成 20px，这里显式清零由边距控制间距。
+    gap: 0,
+    width: '100%',
+    maxWidth: '560px',
+    minHeight: 'min(520px, calc(100vh - 16rem))',
+    padding: `${tokens.spacingVerticalXXXL} ${tokens.spacingHorizontalXXXL}`,
+    textAlign: 'center',
+    boxShadow: tokens.shadow16,
+    // 不要设 backgroundColor：否则会盖掉 `.ql-has-bg .fui-Card` 的毛玻璃。
+  },
+  above: { alignSelf: 'end', marginBottom: tokens.spacingVerticalS },
+  below: {
+    alignSelf: 'start',
+    marginTop: tokens.spacingVerticalS,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',
     gap: tokens.spacingVerticalL,
-    width: '100%',
-    maxWidth: '480px',
-    padding: tokens.spacingVerticalXXL,
-    textAlign: 'center',
-    boxShadow: tokens.shadow16,
-    // 不要设 backgroundColor：否则会盖掉 `.ql-has-bg .fui-Card` 的毛玻璃。
   },
   badge: {
     display: 'flex',
@@ -52,13 +65,12 @@ const useStyles = makeStyles({
   },
   // Fluent Text 自带 textAlign:'start'，卡片上的 center 传不进来，必须在 Text 上显式覆盖。
   title: { margin: '0', textAlign: 'center' },
-  desc: { maxWidth: '34ch', textAlign: 'center' },
+  desc: { textAlign: 'center' },
   actions: {
     display: 'flex',
     flexWrap: 'wrap',
     justifyContent: 'center',
     gap: tokens.spacingHorizontalS,
-    marginTop: tokens.spacingVerticalS,
   },
 });
 
@@ -83,32 +95,36 @@ export function NotFoundPage() {
   return (
     <div className={styles.stage}>
       <Card className={styles.card}>
-        <div className={styles.badge} style={{ backgroundColor: t.colorBrandBackground2, color: t.colorBrandForeground1 }}>
-          <CompassNorthwestRegular aria-hidden />
+        <div className={styles.above}>
+          <div className={styles.badge} style={{ backgroundColor: t.colorBrandBackground2, color: t.colorBrandForeground1 }}>
+            <CompassNorthwestRegular aria-hidden />
+          </div>
         </div>
 
         <Text as="p" size={1000} weight="bold" className={styles.code} style={{ color: t.colorBrandForeground1 }}>
           404
         </Text>
 
-        <div className={styles.copy}>
-          <Text as="h2" size={600} weight="semibold" className={styles.title}>
-            页面不存在
-          </Text>
-          <Text size={300} className={styles.desc} style={{ color: t.colorNeutralForeground3 }}>
-            地址可能拼写有误，或这个页面已经下架。
-          </Text>
-        </div>
+        <div className={styles.below}>
+          <div className={styles.copy}>
+            <Text as="h2" size={600} weight="semibold" className={styles.title}>
+              页面不存在
+            </Text>
+            <Text size={300} className={styles.desc} style={{ color: t.colorNeutralForeground3 }}>
+              地址可能拼写有误，或这个页面已经下架。
+            </Text>
+          </div>
 
-        <div className={styles.actions}>
-          <Button appearance="primary" onClick={() => navigate(user ? roleHome(user.role) : '/')}>
-            返回首页
-          </Button>
-          {canGoBack && (
-            <Button appearance="secondary" onClick={() => navigate(-1)}>
-              返回上一页
+          <div className={styles.actions}>
+            <Button appearance="primary" onClick={() => navigate(user ? roleHome(user.role) : '/')}>
+              返回首页
             </Button>
-          )}
+            {canGoBack && (
+              <Button appearance="secondary" onClick={() => navigate(-1)}>
+                返回上一页
+              </Button>
+            )}
+          </div>
         </div>
       </Card>
     </div>
