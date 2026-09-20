@@ -35,6 +35,7 @@ import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, EmptyView, errCode, errMessage } from '../../components/StateViews';
 import { fmtTime } from '../../components/time';
 import { PageHeader } from '../../components/PageHeader';
+import { useDangerStyles } from '../../components/dangerStyles';
 
 const COMPARE_LABELS: Record<string, string> = { exact: '精确', trim: '忽略空白', float: '浮点容差' };
 
@@ -59,6 +60,7 @@ const columns: TableColumnDefinition<ProblemSummary>[] = [
 
 export function TeacherProblemList() {
   const t = useTheme();
+  const danger = useDangerStyles();
   const navigate = useNavigate();
   const { data, error, loading, reload } = useAsync(listTeacherProblems, []);
   const [open, setOpen] = useState(false);
@@ -300,10 +302,10 @@ export function TeacherProblemList() {
               <Button appearance="secondary" onClick={() => setDeleteTarget(null)} disabled={deleting}>取消</Button>
               <Button
                 appearance="primary"
+                className={danger.solid}
                 icon={<Delete24Regular />}
                 onClick={handleDelete}
                 disabled={deleting}
-                style={{ color: tokens.colorNeutralForegroundInverted }}
               >
                 {deleting ? '删除中…' : '确认删除'}
               </Button>

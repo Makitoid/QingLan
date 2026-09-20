@@ -48,6 +48,7 @@ import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, errCode, errMessage } from '../../components/StateViews';
 import { NumberInput } from '../../components/NumberInput';
 import { PageHeader } from '../../components/PageHeader';
+import { useDangerStyles } from '../../components/dangerStyles';
 import { fmtTimeWithSeconds } from '../../components/time';
 
 const COMPARE_OPTIONS: { value: CompareMode; label: string }[] = [
@@ -186,6 +187,7 @@ export function TeacherProblemEdit() {
   const { id } = useParams();
   const problemId = Number(id);
   const t = useTheme();
+  const danger = useDangerStyles();
   const navigate = useNavigate();
   const { data, error, loading, reload } = useAsync<ProblemDetail>(() => getTeacherProblem(problemId), [problemId]);
 
@@ -564,7 +566,7 @@ export function TeacherProblemEdit() {
               <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
                 <Caption1>本题的修改还没有保存。可以先存为草稿再离开——下次进入本题编辑页会提示恢复草稿。</Caption1>
                 <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-                  「直接退出」只保留上次已保存的内容，已有草稿不受影响。
+                  直接退出只保留上次已保存的内容，已有草稿不受影响。
                 </Caption1>
                 {leaveError && (
                   <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
@@ -577,6 +579,7 @@ export function TeacherProblemEdit() {
               <Button appearance="secondary" onClick={() => setLeaveOpen(false)} disabled={leaveBusy}>取消</Button>
               <Button
                 appearance="secondary"
+                className={danger.outline}
                 onClick={() => {
                   setLeaveOpen(false);
                   goBack();
@@ -586,7 +589,7 @@ export function TeacherProblemEdit() {
                 直接退出
               </Button>
               <Button appearance="primary" onClick={handleSaveDraftAndLeave} disabled={leaveBusy}>
-                {leaveBusy ? '保存中…' : '存为草稿并退出'}
+                {leaveBusy ? '保存中…' : '存为草稿'}
               </Button>
             </DialogActions>
           </DialogBody>
@@ -612,7 +615,7 @@ export function TeacherProblemEdit() {
             </DialogContent>
             <DialogActions>
               <Button appearance="secondary" onClick={() => setDeleteOpen(false)} disabled={deleting}>取消</Button>
-              <Button appearance="primary" icon={<Delete24Regular />} onClick={handleDeleteProblem} disabled={deleting}>
+              <Button appearance="primary" className={danger.solid} icon={<Delete24Regular />} onClick={handleDeleteProblem} disabled={deleting}>
                 {deleting ? '删除中…' : '确认删除'}
               </Button>
             </DialogActions>

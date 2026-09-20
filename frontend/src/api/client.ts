@@ -96,7 +96,21 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
   }
 
   const text = await resp.text();
-  const data = text ? (JSON.parse(text) as unknown) : null;
+  if (!text) {
+    return null as T;
+  }
+  let data: unknown;
+  try {
+    data = JSON.parse(text) as unknown;
+  } catch {
+    // 后端崩溃时 Starlette 返回纯文本（如 "Internal Server Error"），
+    // 不能直接把 SyntaxError 抛给页面。
+    if (!resp.ok) {
+      data = null;
+    } else {
+      throw new ApiError(resp.status, { code: 'UNKNOWN', message: '服务器响应格式异常，请稍后重试' });
+    }
+  }
 
   if (!resp.ok) {
     const body = (data ?? { code: 'UNKNOWN', message: `请求失败（HTTP ${resp.status}）` }) as Partial<ApiErrorBody>;

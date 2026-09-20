@@ -29,7 +29,7 @@ interface Props {
 
 /**
  * 批量操作条：放在 PageHeader 与表格之间，仅在 selectedCount > 0 时出现。
- * 品牌浅底 + 描边，暗色模式下由 Fluent 令牌自动切换。
+ * 品牌浅底无描边，暗色模式下由 Fluent 令牌自动切换。
  */
 export function BulkActionBar({ selectedCount, actions = [], label, children }: Props) {
   const t = useTheme();
@@ -44,7 +44,6 @@ export function BulkActionBar({ selectedCount, actions = [], label, children }: 
         gap: tokens.spacingHorizontalS,
         padding: `${tokens.spacingVerticalSNudge} ${tokens.spacingHorizontalM}`,
         backgroundColor: t.colorBrandBackground2,
-        border: `1px solid ${t.colorBrandStroke1}`,
         borderRadius: tokens.borderRadiusMedium,
       }}
     >

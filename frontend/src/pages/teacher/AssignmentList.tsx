@@ -98,6 +98,8 @@ export function TeacherAssignmentList() {
         size="small"
         selectedValue={modeFilter}
         onTabSelect={(_, d) => setModeFilter(d.value as ModeFilter)}
+        // 抵消小号 Tab 自带的 MNudge 水平内边距，让首个 Tab 文字与 PageHeader 大标题左对齐。
+        style={{ marginLeft: `calc(-1 * ${tokens.spacingHorizontalMNudge})` }}
       >
         {MODE_TABS.map((tab) => (
           <Tab key={tab.value} value={tab.value}>

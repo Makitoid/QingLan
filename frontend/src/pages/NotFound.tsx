@@ -47,10 +47,12 @@ const useStyles = makeStyles({
   copy: {
     display: 'flex',
     flexDirection: 'column',
+    alignItems: 'center',
     gap: tokens.spacingVerticalS,
   },
-  title: { margin: '0' },
-  desc: { maxWidth: '34ch' },
+  // Fluent Text 自带 textAlign:'start'，卡片上的 center 传不进来，必须在 Text 上显式覆盖。
+  title: { margin: '0', textAlign: 'center' },
+  desc: { maxWidth: '34ch', textAlign: 'center' },
   actions: {
     display: 'flex',
     flexWrap: 'wrap',
