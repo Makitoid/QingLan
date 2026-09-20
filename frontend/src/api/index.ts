@@ -53,6 +53,7 @@ export function getSettings(): Promise<SiteSettings> {
 
 export function updateSettings(body: {
   brand_color?: string;
+  brand_color_dark?: string;
   brand_color_source?: BrandColorSource;
   bg_dual?: boolean;
   bg_opacity?: number;

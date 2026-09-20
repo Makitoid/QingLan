@@ -109,9 +109,9 @@ export function TeacherSubmissionPage() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL }}>
       <div>
         <Caption1>
-          <Link to={`/teacher/assignments/${data.assignment_id}/students`} style={{ color: t.colorBrandForeground1 }}>
+          <Button appearance="subtle" size="small" onClick={() => navigate(`/teacher/assignments/${data.assignment_id}/students`)}>
             ← 返回逐学生表
-          </Link>
+          </Button>
         </Caption1>
         <PageHeader
           title={<>提交 #{data.id}</>}

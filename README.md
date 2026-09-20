@@ -1,6 +1,6 @@
+<h1 align="center">青蓝 · QingLan</h1>
 <p align="center">
-  <strong>青蓝 · QingLan</strong><br/>
-  <sub> C/C++ 语言作业提交与自动测评打分平台</sub>
+  <sub>C/C++ 语言作业提交与自动测评打分平台</sub>
 </p>
 
 <p align="center">
@@ -8,6 +8,8 @@
   <img alt="Python 3.11" src="https://img.shields.io/badge/Python-3.11-3776ab.svg"/>
   <img alt="React 18" src="https://img.shields.io/badge/React-18-61dafb.svg"/>
   <img alt="SQLite" src="https://img.shields.io/badge/DB-SQLite_(WAL)-003b57.svg"/>
+  <img alt="main 分支最新版本" src="https://img.shields.io/github/package-json/v/Makitoid/QingLan/main?filename=frontend%2Fpackage.json&label=main&color=2ea44f"/>
+  <img alt="dev 分支最新版本" src="https://img.shields.io/github/package-json/v/Makitoid/QingLan/dev?filename=frontend%2Fpackage.json&label=dev&color=fb8c00"/>
 </p>
 
 ---
@@ -81,6 +83,20 @@ pwsh scripts/stop-local.ps1       # 全部停止
 | 默认管理员 | `admin` / `admin123`（**登录后立刻改密码**） |
 
 手动四终端方式、以及沙箱对 cgroup 命名空间的硬性要求，见 [`部署操作指南.md`](部署操作指南.md) 第一部分。
+
+### 开发计划
+
+[√] 0.1.x：完成基础架构的开发
+
+[√] 0.2.x：添加多项实用功能并对前端UI进行大量修改，使系统适于运行
+
+[ ] 0.3.x：对学生管理系统进行优化，完善权限系统
+
+[ ] 0.4.x：对教师出题系统进行优化修改
+
+[ ] 0.5.x：对学生答题系统进行优化
+
+[ ]  未完待续，持续优化。。。
 
 ### 服务器部署
 

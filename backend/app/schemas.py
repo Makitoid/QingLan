@@ -125,6 +125,7 @@ class ImportResult(BaseModel):
 
 class SettingsOut(BaseModel):
     brand_color: str
+    brand_color_dark: str | None
     brand_color_source: str
     bg_image_url: str | None
     bg_image_url_dark: str | None
@@ -134,6 +135,7 @@ class SettingsOut(BaseModel):
 
 class SettingsUpdate(BaseModel):
     brand_color: str | None = None
+    brand_color_dark: str | None = None
     brand_color_source: Literal["manual", "image"] | None = None
     bg_dual: bool | None = None
     bg_opacity: float | None = Field(default=None, ge=0, le=1)

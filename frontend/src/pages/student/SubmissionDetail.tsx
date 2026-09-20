@@ -1,8 +1,9 @@
 import { useTheme } from '../../appTheme';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import {
   Badge,
+  Button,
   Caption1,
   Card,
   CardHeader,
@@ -44,6 +45,7 @@ function isJudging(status?: string) {
 export function StudentSubmissionPage() {
   const { sid } = useParams();
   const t = useTheme();
+  const navigate = useNavigate();
   const submissionId = Number(sid);
   const [data, setData] = useState<StudentSubmissionDetail | null>(null);
   const [error, setError] = useState<unknown | null>(null);
@@ -171,7 +173,7 @@ export function StudentSubmissionPage() {
       )}
 
       <Caption1>
-        <Link to=".." style={{ color: t.colorBrandForeground1 }}>← 返回题目</Link>
+        <Button appearance="subtle" size="small" onClick={() => navigate(-1)}>← 返回题目</Button>
       </Caption1>
     </div>
   );

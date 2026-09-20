@@ -156,6 +156,8 @@ class SiteSetting(Base):
 
     id = Column(Integer, primary_key=True)
     brand_color = Column(Text, nullable=False, server_default=text("'#0F6CBD'"))
+    # 暗色模式专属品牌色；为空表示暗色沿用 brand_color
+    brand_color_dark = Column(Text)
     brand_color_source = Column(Text, nullable=False, server_default=text("'manual'"))
     bg_image_path = Column(Text)
     bg_image_path_dark = Column(Text)

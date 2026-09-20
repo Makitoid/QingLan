@@ -98,11 +98,13 @@ body {
   border-width: 0;
 }
 
-/* 表头文字在本列水平居中（单元格内容仍左对齐）。
-   表头真正的文字盒子是 th 里那个 display:flex 的 __button 槽，
-   text-align 对它无效，必须改 justify-content。 */
-.fui-DataGridHeaderCell .fui-DataGridHeaderCell__button {
-  justify-content: center;
+/* 表头不做居中：DataGrid 会把列拉伸到远宽于内容（实测列约 179 CSS px，内容最宽
+   约 62px），只居中表头会让表头相对数据恒定右飘约 66px。两者一律共用左轴。
+   唯一的破绽是操作列——单元格以 Button 开头，按钮自带 spacingHorizontalS 水平
+   内边距，图标墨迹会比表头右移同样多的量，于是把首个按钮左移等量补偿回来。 */
+.fui-DataGridCell > .fui-Button:first-child,
+.fui-DataGridCell > div:first-child > .fui-Button:first-child {
+  margin-inline-start: calc(-1 * var(--spacingHorizontalS));
 }
 
 /* 状态类标识统一等宽：启用 / 已停用 / 已放出 / 未放出 字数不同，

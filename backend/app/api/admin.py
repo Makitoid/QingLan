@@ -120,6 +120,7 @@ def bg_image_url(path: str, mode: str = "light") -> str:
 def settings_to_out(s: SiteSetting) -> SettingsOut:
     return SettingsOut(
         brand_color=s.brand_color,
+        brand_color_dark=s.brand_color_dark,
         brand_color_source=s.brand_color_source,
         bg_image_url=bg_image_url(s.bg_image_path) if s.bg_image_path else None,
         bg_image_url_dark=bg_image_url(s.bg_image_path_dark, "dark") if s.bg_image_path_dark else None,
@@ -539,9 +540,13 @@ def get_bg_image(v: str | None = None, mode: str = "light", db: Session = Depend
 def update_settings(body: SettingsUpdate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     if body.brand_color is not None and not HEX_COLOR_RE.match(body.brand_color):
         raise APIError(422, "INVALID_BRAND_COLOR", "主题色格式无效，应为 #RRGGBB")
+    if body.brand_color_dark is not None and not HEX_COLOR_RE.match(body.brand_color_dark):
+        raise APIError(422, "INVALID_BRAND_COLOR", "暗色主题色格式无效，应为 #RRGGBB")
     s = get_or_create_settings(db)
     if body.brand_color is not None:
         s.brand_color = body.brand_color
+    if body.brand_color_dark is not None:
+        s.brand_color_dark = body.brand_color_dark
     if body.brand_color_source is not None:
         s.brand_color_source = body.brand_color_source
     if body.bg_dual is not None:

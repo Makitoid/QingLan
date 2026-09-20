@@ -30,16 +30,34 @@ export function createBrandRamp(brandColor: string): BrandVariants {
   return ramp;
 }
 
-export function buildThemes(brandColor: string | null): { light: Theme; dark: Theme } {
-  if (!brandColor) {
-    return { light: webLightTheme, dark: webDarkTheme };
-  }
+function buildTheme(kind: 'light' | 'dark', brandColor: string | null): Theme {
+  const fallback = kind === 'light' ? webLightTheme : webDarkTheme;
+  if (!brandColor) return fallback;
   try {
     const ramp = createBrandRamp(brandColor);
-    return { light: createLightTheme(ramp), dark: createDarkTheme(ramp) };
+    return kind === 'light' ? createLightTheme(ramp) : createDarkTheme(ramp);
   } catch {
-    return { light: webLightTheme, dark: webDarkTheme };
+    return fallback;
   }
+}
+
+export function buildThemes(brandColor: string | null, darkBrandColor?: string | null): { light: Theme; dark: Theme } {
+  return {
+    light: buildTheme('light', brandColor),
+    dark: buildTheme('dark', darkBrandColor ?? brandColor),
+  };
+}
+
+/**
+ * 亮 / 暗各自用哪张品牌色。暗色专属色只在「开启亮暗分图且暗图已上传」时生效，
+ * 与 BackgroundLayers 的 resolveBgUrl 选图规则保持一致，否则回退到亮色品牌色。
+ */
+export function resolveBrandColors(effective: SiteSettings | null): { light: string | null; dark: string | null } {
+  const darkApplies = Boolean(effective?.bg_dual && effective.bg_image_url_dark);
+  return {
+    light: effective?.brand_color ?? null,
+    dark: darkApplies ? (effective?.brand_color_dark ?? null) : null,
+  };
 }
 
 export async function fetchSiteSettings(): Promise<SiteSettings | null> {

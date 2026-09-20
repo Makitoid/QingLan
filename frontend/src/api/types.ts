@@ -24,6 +24,8 @@ export type BgMode = 'light' | 'dark';
 
 export interface SiteSettings {
   brand_color: string;
+  /** 暗色模式专属品牌色；null 表示暗色沿用 brand_color。 */
+  brand_color_dark: string | null;
   brand_color_source: BrandColorSource;
   bg_image_url: string | null;
   bg_image_url_dark: string | null;

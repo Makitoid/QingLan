@@ -6,7 +6,7 @@ import { getToken, getStoredUser } from './api/client';
 import { Layout } from './components/Layout';
 import { RequireAuth, roleHome } from './components/Guard';
 import { SettingsProvider, ThemeModeProvider, useSettings, useThemeMode } from './context';
-import { buildThemes } from './theme';
+import { buildThemes, resolveBrandColors } from './theme';
 import { AppThemeProvider } from './appTheme';
 
 import { LoginPage } from './pages/Login';
@@ -42,7 +42,8 @@ function HomeRedirect() {
 function ThemedApp() {
   const { effective } = useSettings();
   const { isDark } = useThemeMode();
-  const themes = useMemo(() => buildThemes(effective?.brand_color ?? null), [effective?.brand_color]);
+  const { light: lightBrand, dark: darkBrand } = resolveBrandColors(effective);
+  const themes = useMemo(() => buildThemes(lightBrand, darkBrand), [lightBrand, darkBrand]);
 
   const theme = isDark ? themes.dark : themes.light;
   return (
