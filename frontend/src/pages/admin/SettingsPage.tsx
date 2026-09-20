@@ -39,6 +39,44 @@ interface SlotProps {
 // Fluent 的开关轨道自带 8px 左外边距（点击热区），会让开关比卡片内其他内容缩进一截。
 const switchIndicator = { style: { marginLeft: 0 } };
 
+/** 撤销取色时要回写的槽位；空值（暗色尚未单独设置过）不生成撤销项。 */
+type ColorUndo = { mode: BgMode; color: string }[];
+
+const undoEntry = (previous: string, mode: BgMode): ColorUndo =>
+  /^#[0-9a-fA-F]{6}$/.test(previous) ? [{ mode, color: previous }] : [];
+
+interface ColorFieldProps {
+  label: string;
+  hint?: string;
+  value: string;
+  onChange: (value: string) => void;
+}
+
+function BrandColorField({ label, hint, value, onChange }: ColorFieldProps) {
+  const t = useTheme();
+  return (
+    <Field label={label} hint={hint}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalM }}>
+        <input
+          type="color"
+          value={/^#[0-9a-fA-F]{6}$/.test(value) ? value : '#000000'}
+          onChange={(e) => onChange(e.target.value)}
+          style={{
+            width: '48px',
+            height: '32px',
+            padding: 0,
+            border: `1px solid ${t.colorNeutralStroke1}`,
+            borderRadius: tokens.borderRadiusMedium,
+            backgroundColor: 'transparent',
+            cursor: 'pointer',
+          }}
+        />
+        <Text style={{ fontFamily: 'Consolas, monospace' }}>{value}</Text>
+      </div>
+    </Field>
+  );
+}
+
 function BgSlot({ label, url, disabled, onSelect, onClear }: SlotProps) {
   const t = useTheme();
   return (
@@ -89,12 +127,13 @@ export function AdminSettingsPage() {
   const { settings, effective, setPreview, reload } = useSettings();
 
   const [brandColor, setBrandColor] = useState(settings?.brand_color ?? '');
+  const [brandColorDark, setBrandColorDark] = useState(settings?.brand_color_dark ?? '');
   const [bgOpacity, setBgOpacity] = useState(settings?.bg_opacity ?? 0.15);
   const [bgDual, setBgDual] = useState(settings?.bg_dual ?? false);
   const [colorFromImage, setColorFromImage] = useState(settings?.brand_color_source === 'image');
   const [busy, setBusy] = useState(false);
   const [compressing, setCompressing] = useState(false);
-  const [message, setMessage] = useState<{ intent: 'success' | 'error' | 'info'; text: string; undo?: string } | null>(null);
+  const [message, setMessage] = useState<{ intent: 'success' | 'error' | 'info'; text: string; undo?: ColorUndo } | null>(null);
   const [oversize, setOversize] = useState<{ file: File; mode: BgMode } | null>(null);
   const lightInput = useRef<HTMLInputElement>(null);
   const darkInput = useRef<HTMLInputElement>(null);
@@ -102,6 +141,7 @@ export function AdminSettingsPage() {
   useEffect(() => {
     if (settings) {
       setBrandColor(settings.brand_color);
+      setBrandColorDark(settings.brand_color_dark ?? '');
       setBgOpacity(settings.bg_opacity);
       setBgDual(settings.bg_dual);
       setColorFromImage(settings.brand_color_source === 'image');
@@ -113,20 +153,28 @@ export function AdminSettingsPage() {
   }, [brandColor, setPreview]);
 
   useEffect(() => {
+    if (brandColorDark) setPreview({ brand_color_dark: brandColorDark });
+  }, [brandColorDark, setPreview]);
+
+  useEffect(() => {
     setPreview({ bg_opacity: bgOpacity });
   }, [bgOpacity, setPreview]);
 
-  const applyExtracted = async (file: File | Blob, okText: string) => {
+  /** 从一张图里取色并写进对应模式的字段；提不出色时返回 null，由调用方决定提示文案。 */
+  const extractInto = async (file: File | Blob, mode: BgMode): Promise<string | null> => {
     const extracted = await extractBrandColor(file);
-    if (!extracted) {
-      setMessage({ intent: 'info', text: `${okText}；但这张图里没找到合适的主题色，已保留当前主题色` });
-      return;
-    }
-    const previous = brandColor;
-    setBrandColor(extracted);
-    await updateSettings({ brand_color: extracted, brand_color_source: 'image' });
-    setMessage({ intent: 'success', text: `${okText}，主题色已按背景图更新为 ${extracted}`, undo: previous });
+    if (!extracted) return null;
+    if (mode === 'dark') setBrandColorDark(extracted);
+    else setBrandColor(extracted);
+    await updateSettings(
+      mode === 'dark'
+        ? { brand_color_dark: extracted, brand_color_source: 'image' }
+        : { brand_color: extracted, brand_color_source: 'image' },
+    );
+    return extracted;
   };
+
+  const slotLabel = (mode: BgMode) => (bgDual ? (mode === 'dark' ? '暗色' : '亮色') : '');
 
   const upload = async (file: File | Blob, mode: BgMode) => {
     setBusy(true);
@@ -136,7 +184,17 @@ export function AdminSettingsPage() {
       setPreview(mode === 'dark' ? { bg_image_url_dark: resp.url } : { bg_image_url: resp.url });
       const okText = mode === 'dark' ? '暗色背景图已上传' : '背景图已上传';
       if (colorFromImage) {
-        await applyExtracted(file, okText);
+        const previous = mode === 'dark' ? brandColorDark : brandColor;
+        const extracted = await extractInto(file, mode);
+        setMessage(
+          extracted
+            ? {
+                intent: 'success',
+                text: `${okText}，${slotLabel(mode)}主题色已更新为 ${extracted}`,
+                undo: undoEntry(previous, mode),
+              }
+            : { intent: 'info', text: `${okText}；但这张图里没找到合适的主题色，已保留当前主题色` },
+        );
       } else {
         setMessage({ intent: 'success', text: `${okText}并即时预览` });
       }
@@ -210,35 +268,59 @@ export function AdminSettingsPage() {
     // 抽色开关决定"以后上传是否自动改主题色"，改了就立刻落库，避免刷新后状态跳回去
     await updateSettings({ brand_color_source: on ? 'image' : 'manual' });
     if (!on) return;
-    const url = effective?.bg_image_url;
-    if (!url) {
+
+    const slots: { mode: BgMode; url: string }[] = [];
+    if (effective?.bg_image_url) slots.push({ mode: 'light', url: effective.bg_image_url });
+    if (bgDual && effective?.bg_image_url_dark) slots.push({ mode: 'dark', url: effective.bg_image_url_dark });
+    if (!slots.length) {
       setMessage({ intent: 'info', text: '先上传一张背景图，主题色才能跟着它走' });
       return;
     }
+
     setBusy(true);
-    try {
-      const blob = await fetch(url).then((r) => r.blob());
-      await applyExtracted(blob, '已从当前背景图提取主题色');
-    } catch {
-      setMessage({ intent: 'error', text: '读取背景图失败，无法提取主题色' });
-    } finally {
-      setBusy(false);
+    const done: string[] = [];
+    const undo: ColorUndo = [];
+    let failed = false;
+    for (const { mode, url } of slots) {
+      try {
+        const previous = mode === 'dark' ? brandColorDark : brandColor;
+        const blob = await fetch(url).then((r) => r.blob());
+        const extracted = await extractInto(blob, mode);
+        if (extracted) {
+          done.push(`${slotLabel(mode)}主题色 ${extracted}`);
+          undo.push(...undoEntry(previous, mode));
+        }
+      } catch {
+        failed = true;
+      }
     }
+    setBusy(false);
+
+    if (done.length) setMessage({ intent: 'success', text: `已按背景图提取：${done.join('；')}`, undo });
+    else if (failed) setMessage({ intent: 'error', text: '读取背景图失败，无法提取主题色' });
+    else setMessage({ intent: 'info', text: '背景图里没找到合适的主题色，已保留当前主题色' });
   };
 
-  const editColorManually = async (value: string) => {
+  const editColorManually = async (value: string, mode: BgMode) => {
     const wasFollowing = colorFromImage;
-    setBrandColor(value);
+    if (mode === 'dark') setBrandColorDark(value);
+    else setBrandColor(value);
     setColorFromImage(false);
     if (wasFollowing) await updateSettings({ brand_color_source: 'manual' });
   };
 
   const undoColor = async () => {
-    if (!message?.undo) return;
-    const previous = message.undo;
-    setBrandColor(previous);
-    setMessage({ intent: 'info', text: `已恢复为主题色 ${previous}` });
-    await updateSettings({ brand_color: previous });
+    const entries = message?.undo;
+    if (!entries?.length) return;
+    for (const entry of entries) {
+      if (entry.mode === 'dark') setBrandColorDark(entry.color);
+      else setBrandColor(entry.color);
+    }
+    await updateSettings({
+      brand_color: entries.find((e) => e.mode === 'light')?.color,
+      brand_color_dark: entries.find((e) => e.mode === 'dark')?.color,
+    });
+    setMessage({ intent: 'info', text: `已恢复为主题色 ${entries.map((e) => e.color).join(' / ')}` });
     await reload();
   };
 
@@ -248,6 +330,7 @@ export function AdminSettingsPage() {
     try {
       await updateSettings({
         brand_color: brandColor,
+        brand_color_dark: brandColorDark || undefined,
         brand_color_source: colorFromImage ? 'image' : 'manual',
         bg_dual: bgDual,
         bg_opacity: bgOpacity,
@@ -267,6 +350,8 @@ export function AdminSettingsPage() {
 
   const lightUrl = effective?.bg_image_url ?? null;
   const darkUrl = effective?.bg_image_url_dark ?? null;
+  // 与 resolveBrandColors 同一条规则：只有真的在用两张图时，暗色主题色才独立生效
+  const darkSlotInUse = bgDual && Boolean(darkUrl);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL }}>
@@ -279,7 +364,7 @@ export function AdminSettingsPage() {
         <MessageBar intent={message.intent} style={{ borderRadius: tokens.borderRadiusMedium }}>
           <MessageBarBody>
             {message.text}
-            {message.undo && (
+            {Boolean(message.undo?.length) && (
               <Button size="small" appearance="transparent" onClick={() => void undoColor()}>
                 撤销取色
               </Button>
@@ -291,28 +376,20 @@ export function AdminSettingsPage() {
       <Card size="medium">
         <CardHeader header={<Text weight="semibold">主题色</Text>} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
-          <Field
-            label="品牌色"
+          <BrandColorField
+            label={darkSlotInUse ? '亮色模式品牌色' : '品牌色'}
             hint="用于生成全站 16 阶品牌色阶（chroma-js 插值），影响按钮、链接、焦点环、图表等。"
-          >
-            <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalM }}>
-              <input
-                type="color"
-                value={/^#[0-9a-fA-F]{6}$/.test(brandColor) ? brandColor : '#000000'}
-                onChange={(e) => void editColorManually(e.target.value)}
-                style={{
-                  width: '48px',
-                  height: '32px',
-                  padding: 0,
-                  border: `1px solid ${t.colorNeutralStroke1}`,
-                  borderRadius: tokens.borderRadiusMedium,
-                  backgroundColor: 'transparent',
-                  cursor: 'pointer',
-                }}
-              />
-              <Text style={{ fontFamily: 'Consolas, monospace' }}>{brandColor}</Text>
-            </div>
-          </Field>
+            value={brandColor}
+            onChange={(v) => void editColorManually(v, 'light')}
+          />
+          {darkSlotInUse && (
+            <BrandColorField
+              label="暗色模式品牌色"
+              hint="暗色模式在用自己的背景图，主题色也可以独立于亮色；未单独提取过时沿用亮色。"
+              value={brandColorDark || brandColor}
+              onChange={(v) => void editColorManually(v, 'dark')}
+            />
+          )}
           <Switch
             checked={colorFromImage}
             disabled={busy}
@@ -321,7 +398,7 @@ export function AdminSettingsPage() {
             onChange={(_, data) => void toggleExtract(data.checked)}
           />
           <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-            打开后主题色跟随背景图：每次换图都会重新提取并写入主题色（可撤销）；手动改上面的品牌色会自动关闭此开关。
+            打开后主题色跟随背景图：每次换图都会重新提取并写入对应模式的主题色（可撤销）；亮暗各用一张图时分别提取、互不覆盖。手动改上面的品牌色会自动关闭此开关。
           </Caption1>
         </div>
       </Card>

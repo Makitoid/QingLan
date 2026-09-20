@@ -99,9 +99,9 @@ export function StudentProblemPage() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL }}>
       <div>
         <Caption1>
-          <Link to={`/student/assignments/${assignmentId}`} style={{ color: t.colorBrandForeground1 }}>
+          <Button appearance="subtle" size="small" onClick={() => navigate(`/student/assignments/${assignmentId}`)}>
             ← 返回场次
-          </Link>
+          </Button>
         </Caption1>
         <PageHeader
           title={p.title}

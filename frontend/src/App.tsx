@@ -6,7 +6,7 @@ import { getToken, getStoredUser } from './api/client';
 import { Layout } from './components/Layout';
 import { RequireAuth, roleHome } from './components/Guard';
 import { SettingsProvider, ThemeModeProvider, useSettings, useThemeMode } from './context';
-import { buildThemes } from './theme';
+import { buildThemes, resolveBrandColors } from './theme';
 import { AppThemeProvider } from './appTheme';
 
 import { LoginPage } from './pages/Login';
@@ -21,6 +21,7 @@ import { StudentSubmissionPage } from './pages/student/SubmissionDetail';
 
 import { TeacherProblemList } from './pages/teacher/ProblemList';
 import { TeacherProblemEdit } from './pages/teacher/ProblemEdit';
+import TeacherStudentList from './pages/teacher/StudentList';
 import { TeacherAssignmentList } from './pages/teacher/AssignmentList';
 import { TeacherAssignmentNew } from './pages/teacher/AssignmentNew';
 import { TeacherAssignmentOverview } from './pages/teacher/AssignmentOverview';
@@ -41,7 +42,8 @@ function HomeRedirect() {
 function ThemedApp() {
   const { effective } = useSettings();
   const { isDark } = useThemeMode();
-  const themes = useMemo(() => buildThemes(effective?.brand_color ?? null), [effective?.brand_color]);
+  const { light: lightBrand, dark: darkBrand } = resolveBrandColors(effective);
+  const themes = useMemo(() => buildThemes(lightBrand, darkBrand), [lightBrand, darkBrand]);
 
   const theme = isDark ? themes.dark : themes.light;
   return (
@@ -69,6 +71,7 @@ function ThemedApp() {
               <Route path="/teacher/assignments/new" element={<TeacherAssignmentNew />} />
               <Route path="/teacher/assignments/:id" element={<TeacherAssignmentOverview />} />
               <Route path="/teacher/assignments/:id/students" element={<TeacherAssignmentStudents />} />
+              <Route path="/teacher/students" element={<TeacherStudentList />} />
               <Route path="/teacher/submissions/:sid" element={<TeacherSubmissionPage />} />
             </Route>
             <Route element={<RequireAuth roles={['admin']} />}>

@@ -25,7 +25,7 @@ export function VerdictBadge({ verdict, short }: { verdict: Verdict | null | und
   const c = verdictColors(t)[verdict];
   return (
     <Badge
-      size="medium"
+      size="large"
       style={{ color: c.fg, backgroundColor: c.bg, borderRadius: tokens.borderRadiusMedium, fontWeight: tokens.fontWeightSemibold }}
     >
       {short ? verdict : c.label}
@@ -37,20 +37,20 @@ export function StatusBadge({ status }: { status: string }) {
   const t = useTheme();
   if (status === 'pending' || status === 'judging') {
     return (
-      <Badge size="medium" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4, borderRadius: tokens.borderRadiusMedium }}>
+      <Badge size="large" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4, borderRadius: tokens.borderRadiusMedium }}>
         {status === 'pending' ? '排队中' : '判题中'}
       </Badge>
     );
   }
   if (status === 'failed') {
     return (
-      <Badge size="medium" style={{ color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2, borderRadius: tokens.borderRadiusMedium }}>
+      <Badge size="large" style={{ color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2, borderRadius: tokens.borderRadiusMedium }}>
         判题失败
       </Badge>
     );
   }
   return (
-    <Badge size="medium" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2, borderRadius: tokens.borderRadiusMedium }}>
+    <Badge size="large" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2, borderRadius: tokens.borderRadiusMedium }}>
       已判题
     </Badge>
   );

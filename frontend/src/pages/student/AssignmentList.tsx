@@ -47,7 +47,7 @@ export function StudentAssignmentList() {
                       </Link>
                     )}
                     {columnId === 'mode' && (
-                      <Badge appearance="outline" size="small">
+                      <Badge appearance="outline" size="large">
                         {item.mode === 'homework' ? '作业' : '测试'}
                       </Badge>
                     )}
@@ -58,7 +58,7 @@ export function StudentAssignmentList() {
                     )}
                     {columnId === 'state' && (
                       <Badge
-                        size="small"
+                        size="large"
                         style={
                           item.state === 'ongoing'
                             ? { color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }

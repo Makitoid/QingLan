@@ -33,9 +33,9 @@ export function StudentAssignmentDetail() {
         subtitle={<>时间窗：{fmtTime(data.start_time)} ~ {fmtTime(data.end_time)} · 计分策略：{data.score_policy === 'best' ? '取历次最高分' : '取最后一次提交'}</>}
         actions={
           <>
-            <Badge appearance="outline" size="small">{data.mode === 'homework' ? '作业' : '测试'}</Badge>
+            <Badge appearance="outline" size="large">{data.mode === 'homework' ? '作业' : '测试'}</Badge>
             <Badge
-              size="small"
+              size="large"
               style={
                 data.state === 'ongoing'
                   ? { color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }

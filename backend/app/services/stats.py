@@ -114,6 +114,7 @@ def student_rows(db: Session, assignment: Assignment) -> list[dict]:
         last_submitted_at = max((s.submitted_at for s in mine), default=None)
         rows.append({
             "student_id": student.id,
+            "username": student.username,
             "name": student.display_name,
             "submitted_count": len(mine),
             "best_effective_score": best,

@@ -93,7 +93,7 @@ export function TeacherAssignmentNew() {
         <Caption1>
           <Button appearance="subtle" size="small" onClick={() => navigate('/teacher/assignments')}>← 返回场次列表</Button>
         </Caption1>
-        <PageHeader title="发布作业 / 测试" />
+        <PageHeader title="发布作业 / 考试" />
       </div>
 
       {formError && (
@@ -109,14 +109,24 @@ export function TeacherAssignmentNew() {
             <Input value={title} onChange={(_, d) => setTitle(d.value)} placeholder="如：第 3 周 C 语言作业" />
           </Field>
           <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: tokens.spacingHorizontalM }}>
-            <Field label="模式" hint="作业即时可见判定；测试需结束后手动放出。">
+            <Field label="模式">
               <Dropdown
-                value={mode === 'homework' ? '作业' : '测试'}
+                value={mode === 'homework' ? '作业' : '考试'}
                 selectedOptions={[mode]}
                 onOptionSelect={(_, d) => setMode(d.optionValue as AssignmentMode)}
               >
-                <Option value="homework">作业</Option>
-                <Option value="test">测试</Option>
+                <Option value="homework" text="作业">
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span>作业</span>
+                    <Caption1 style={{ color: t.colorNeutralForeground3 }}>即时可见判定</Caption1>
+                  </div>
+                </Option>
+                <Option value="test" text="考试">
+                  <div style={{ display: 'flex', flexDirection: 'column' }}>
+                    <span>考试</span>
+                    <Caption1 style={{ color: t.colorNeutralForeground3 }}>结束后手动放出</Caption1>
+                  </div>
+                </Option>
               </Dropdown>
             </Field>
             <Field label="开始时间" required>

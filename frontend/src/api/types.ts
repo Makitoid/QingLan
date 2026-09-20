@@ -24,12 +24,49 @@ export type BgMode = 'light' | 'dark';
 
 export interface SiteSettings {
   brand_color: string;
+  /** 暗色模式专属品牌色；null 表示暗色沿用 brand_color。 */
+  brand_color_dark: string | null;
   brand_color_source: BrandColorSource;
   bg_image_url: string | null;
   bg_image_url_dark: string | null;
   bg_dual: boolean;
   bg_opacity: number;
 }
+
+/* ---------- groups（学生分组 / 班级，全站共享，管理员维护） ---------- */
+
+/** 分组的精简引用，随学生一起返回。 */
+export interface GroupRef {
+  id: number;
+  name: string;
+}
+
+/** 分组定义 + 成员数，对应后端 GroupOut。 */
+export interface GroupItem extends GroupRef {
+  member_count: number;
+}
+
+/** 教师端「我的学生」行，对应后端 BoundStudentOut（无归属教师字段）。 */
+export interface BoundStudentItem {
+  id: number;
+  username: string;
+  display_name: string;
+  is_active: boolean;
+  groups: GroupRef[];
+}
+
+/** 组成员批量写入的返回体，对应后端 GroupMembershipOut。 */
+export interface BatchResult {
+  success_count: number;
+}
+
+/** 只报成败的批量接口返回体，对应后端 SuccessOut。 */
+export interface SuccessResult {
+  success: boolean;
+}
+
+/** 组成员批量写入方向。 */
+export type GroupMembershipAction = 'add' | 'remove';
 
 /* ---------- admin ---------- */
 
@@ -47,6 +84,7 @@ export interface StudentItem {
   display_name: string;
   is_active: boolean;
   teachers: { id: number; display_name: string }[];
+  groups: GroupRef[];
 }
 
 export interface CreateTeacherBody {
@@ -61,9 +99,15 @@ export interface CreateStudentBody {
   display_name: string;
 }
 
+/**
+ * 导入失败行明细。
+ * 后端历史上只回 `content`（整行原文），M5 起补 `username`（学号）；
+ * 两个字段都按可选处理，渲染时用 `username ?? content` 兜底。
+ */
 export interface ImportFailure {
   line: number;
-  username: string | null;
+  content?: string;
+  username?: string;
   reason: string;
 }
 
@@ -92,6 +136,8 @@ export interface ProblemSummary {
   memory_limit_mb: number;
   compare_mode: CompareMode;
   created_at: string;
+  /** 题库分组（自由文本，可空）。 */
+  group_name?: string | null;
 }
 
 export interface ProblemDetail {
@@ -106,6 +152,11 @@ export interface ProblemDetail {
   float_eps: number | null;
   created_at: string;
   cases: TestCase[];
+  group_name?: string | null;
+  /** 未保存的草稿（与正式字段同构）；服务端保存题目后清空。 */
+  draft?: ProblemDraft | null;
+  /** 草稿保存时间，UTC ISO 字符串。 */
+  draft_saved_at?: string | null;
 }
 
 export interface ProblemBody {
@@ -117,6 +168,20 @@ export interface ProblemBody {
   memory_limit_mb: number;
   compare_mode: CompareMode;
   float_eps: number | null;
+  group_name?: string | null;
+}
+
+/** 题目草稿：与 ProblemBody 同构，后端以 JSON 存于 problems.draft。 */
+export interface ProblemDraft {
+  title: string;
+  description: string;
+  input_format: string;
+  output_format: string;
+  time_limit_ms: number;
+  memory_limit_mb: number;
+  compare_mode: CompareMode;
+  float_eps: number | null;
+  group_name?: string | null;
 }
 
 export interface CaseBody {
@@ -189,6 +254,8 @@ export interface AssignmentOverview {
 
 export interface AssignmentStudentRow {
   student_id: number;
+  /** 学号（后端 M5 起补充，旧数据可能为空）。 */
+  username?: string;
   name: string;
   submitted_count: number;
   best_effective_score: number | null;

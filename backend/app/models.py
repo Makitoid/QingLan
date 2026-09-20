@@ -28,6 +28,26 @@ class TeacherStudent(Base):
     student_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
 
 
+class Group(Base):
+    """学生分组（班级/群组），全站共享，管理员维护。"""
+
+    __tablename__ = "groups"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(Text, nullable=False, unique=True)
+    created_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))
+
+
+class GroupMember(Base):
+    """多组模型：一个学生可属于多个组。"""
+
+    __tablename__ = "group_members"
+    __table_args__ = (Index("idx_group_members_student", "student_id"),)
+
+    group_id = Column(Integer, ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True)
+    student_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+
+
 class Problem(Base):
     __tablename__ = "problems"
     __table_args__ = (CheckConstraint("compare_mode IN ('exact','trim','float')"),)
@@ -41,6 +61,10 @@ class Problem(Base):
     memory_limit_mb = Column(Integer, nullable=False, server_default=text("256"))
     compare_mode = Column(Text, nullable=False, server_default=text("'trim'"))
     float_eps = Column(Float)
+    # group 是 SQL 保留字，列名用 group_name（自由文本，可空）
+    group_name = Column(Text)
+    draft = Column(Text)
+    draft_saved_at = Column(Text)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))
 
@@ -132,6 +156,8 @@ class SiteSetting(Base):
 
     id = Column(Integer, primary_key=True)
     brand_color = Column(Text, nullable=False, server_default=text("'#0F6CBD'"))
+    # 暗色模式专属品牌色；为空表示暗色沿用 brand_color
+    brand_color_dark = Column(Text)
     brand_color_source = Column(Text, nullable=False, server_default=text("'manual'"))
     bg_image_path = Column(Text)
     bg_image_path_dark = Column(Text)

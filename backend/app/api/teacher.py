@@ -1,6 +1,8 @@
+import json
 from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
+from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
@@ -8,11 +10,16 @@ from sqlalchemy.orm import Session
 from .. import schemas
 from ..core.db import get_db
 from ..core.security import APIError, require_teacher
-from ..models import (Assignment, AssignmentProblem, Problem, Submission,
-                      SubmissionResult, TestCase, User)
+from ..models import (Assignment, AssignmentProblem, Group, Problem,
+                      Submission, SubmissionResult, TestCase, User)
+from ..services import export as export_svc
+from ..services import groups as groups_svc
 from ..services import stats, visibility
 
 router = APIRouter()
+
+# 红线：本模块不得出现任何密码相关能力（hash_password / ResetPasswordRequest 等），
+# 批量重置密码只存在于 admin 端。tests/test_groups_api.py 有断言守护。
 
 COMPARE_MODES = {"exact", "trim", "float"}
 SCORE_POLICIES = {"best", "last"}
@@ -57,6 +64,21 @@ def _get_owned_case(db: Session, teacher: User, case_id: int) -> TestCase:
         raise APIError(404, "CASE_NOT_FOUND", "用例不存在")
     _get_owned_problem(db, teacher, case.problem_id)
     return case
+
+
+def _load_draft(raw: str | None) -> schemas.ProblemDraft | None:
+    """草稿 JSON → ProblemDraft；脏数据按“无草稿”处理，不让编辑页打不开。"""
+    if not raw:
+        return None
+    try:
+        return schemas.ProblemDraft.model_validate(json.loads(raw))
+    except Exception:
+        return None
+
+
+def _clear_draft(problem: Problem) -> None:
+    problem.draft = None
+    problem.draft_saved_at = None
 
 
 def _validate_assignment_problems(db: Session, teacher: User, items: list[schemas.AssignmentProblemIn]):
@@ -144,8 +166,11 @@ def get_problem(problem_id: int,
     cases = db.execute(
         select(TestCase).where(TestCase.problem_id == problem.id).order_by(TestCase.seq)
     ).scalars().all()
+    draft = _load_draft(problem.draft)
     data = schemas.ProblemOut.model_validate(problem).model_dump()
     data["cases"] = cases
+    data["draft"] = draft.model_dump() if draft is not None else None
+    data["draft_saved_at"] = problem.draft_saved_at
     return data
 
 
@@ -160,9 +185,33 @@ def update_problem(problem_id: int, body: schemas.ProblemUpdate,
         _validate_problem_mode(merged_mode, merged_eps)
     for field, value in changes.items():
         setattr(problem, field, value)
+    # 正式保存成功即视为草稿已落地，顺带清空（跨设备不再提示恢复）
+    _clear_draft(problem)
     db.commit()
     db.refresh(problem)
     return problem
+
+
+@router.put("/problems/{problem_id}/draft", response_model=schemas.ProblemDraftSavedOut)
+def save_problem_draft(problem_id: int, body: schemas.ProblemDraft,
+                       db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """保存未提交的编辑内容；新草稿直接覆盖旧草稿（每题仅一份）。"""
+    problem = _get_owned_problem(db, teacher, problem_id)
+    if body.compare_mode not in COMPARE_MODES:
+        raise APIError(422, "VALIDATION_ERROR", "比对模式不合法")
+    problem.draft = json.dumps(body.model_dump(), ensure_ascii=False)
+    problem.draft_saved_at = _utcnow()
+    db.commit()
+    return schemas.ProblemDraftSavedOut(draft_saved_at=problem.draft_saved_at)
+
+
+@router.delete("/problems/{problem_id}/draft")
+def delete_problem_draft(problem_id: int,
+                         db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    problem = _get_owned_problem(db, teacher, problem_id)
+    _clear_draft(problem)
+    db.commit()
+    return {"ok": True}
 
 
 @router.delete("/problems/{problem_id}")
@@ -345,6 +394,17 @@ def assignment_students(assignment_id: int,
     return stats.student_rows(db, assignment)
 
 
+@router.get("/assignments/{assignment_id}/export")
+def export_assignment_students(assignment_id: int, tz_offset: int = 0,
+                               db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """导出本场次成绩 xlsx。tz_offset 为前端本地时区分钟偏移（库内是 UTC，坑 9）。"""
+    assignment = _get_owned_assignment(db, teacher, assignment_id)
+    rows = stats.student_rows(db, assignment)
+    payload = export_svc.build_assignment_students_xlsx(assignment.title, rows, tz_offset)
+    headers = export_svc.attachment_headers(f"{assignment.title}_成绩.xlsx")
+    return StreamingResponse(iter([payload]), media_type=export_svc.XLSX_MEDIA_TYPE, headers=headers)
+
+
 @router.get("/submissions/{submission_id}", response_model=schemas.SubmissionDetailOut)
 def get_submission(submission_id: int,
                    db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
@@ -380,3 +440,44 @@ def patch_manual_score(submission_id: int, body: schemas.ManualScorePatch,
     db.commit()
     db.refresh(submission)
     return _submission_detail(db, submission)
+
+
+# ---------- 学生与分组（教师端无任何密码接口）----------
+
+@router.get("/students", response_model=list[schemas.BoundStudentOut])
+def list_bound_students(db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    students = stats.bound_students(db, teacher.id)
+    group_map = groups_svc.groups_map_for_students(db, [s.id for s in students])
+    return [
+        schemas.BoundStudentOut(
+            id=s.id,
+            username=s.username,
+            display_name=s.display_name,
+            is_active=s.is_active,
+            groups=group_map.get(s.id, []),
+        )
+        for s in students
+    ]
+
+
+@router.get("/groups", response_model=list[schemas.GroupOut])
+def list_groups(db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """组定义全站共享，教师只读。"""
+    return [
+        schemas.GroupOut(id=g.id, name=g.name, created_at=g.created_at, member_count=count)
+        for g, count in groups_svc.list_groups_with_count(db)
+    ]
+
+
+@router.post("/students/group_members", response_model=schemas.GroupMembershipOut)
+def batch_group_members(body: schemas.GroupMembersRequest,
+                        db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """批量加入/移出分组：先校验 student_ids ⊆ 绑定学生集合，越权则整批 403 拒绝。"""
+    student_ids = list(dict.fromkeys(body.student_ids))
+    if not student_ids:
+        raise APIError(422, "EMPTY_SELECTION", "未选择任何学生")
+    bound_ids = {s.id for s in stats.bound_students(db, teacher.id)}
+    if not set(student_ids) <= bound_ids:
+        raise APIError(403, "STUDENT_NOT_BOUND", "存在未绑定到本教师的学生，操作已整批取消")
+    changed = groups_svc.apply_membership(db, student_ids, body.group_ids, body.action)
+    return schemas.GroupMembershipOut(success_count=changed)
