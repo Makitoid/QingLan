@@ -36,6 +36,9 @@ interface SlotProps {
   onClear: () => void;
 }
 
+// Fluent 的开关轨道自带 8px 左外边距（点击热区），会让开关比卡片内其他内容缩进一截。
+const switchIndicator = { style: { marginLeft: 0 } };
+
 function BgSlot({ label, url, disabled, onSelect, onClear }: SlotProps) {
   const t = useTheme();
   return (
@@ -314,6 +317,7 @@ export function AdminSettingsPage() {
             checked={colorFromImage}
             disabled={busy}
             label="主题色从背景图提取"
+            indicator={switchIndicator}
             onChange={(_, data) => void toggleExtract(data.checked)}
           />
           <Caption1 style={{ color: t.colorNeutralForeground3 }}>
@@ -332,6 +336,7 @@ export function AdminSettingsPage() {
             checked={bgDual}
             disabled={busy}
             label="亮色 / 暗色使用不同背景图"
+            indicator={switchIndicator}
             onChange={(_, data) => {
               setBgDual(data.checked);
               setPreview({ bg_dual: data.checked });

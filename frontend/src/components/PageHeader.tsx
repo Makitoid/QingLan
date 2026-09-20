@@ -26,7 +26,7 @@ export function PageHeader({
           flexWrap: 'wrap',
         }}
       >
-        <Text as="h2" size={600} weight="semibold">
+        <Text as="h2" size={600} weight="semibold" style={{ margin: 0 }}>
           {title}
         </Text>
         {actions && (
@@ -38,7 +38,7 @@ export function PageHeader({
           style={{
             color: t.colorNeutralForeground3,
             display: 'block',
-            marginTop: tokens.spacingVerticalSNudge,
+            marginTop: tokens.spacingVerticalXXS,
           }}
         >
           {subtitle}

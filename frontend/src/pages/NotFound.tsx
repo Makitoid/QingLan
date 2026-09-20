@@ -80,7 +80,7 @@ const useStyles = makeStyles({
  * 毛玻璃不需要在这里写任何颜色：本页由 App.tsx 的 catch-all 路由（`path="*"`）渲染在
  * `<Layout />` 之内，Layout 解析到站点背景图时给根节点挂 `.ql-has-bg`，index.css 的
  * `.ql-has-bg .fui-Card` 用 `--ql-surface`（Layout 按当前主题写进 :root 的
- * `colorNeutralBackground1` 半透明色）+ `backdrop-filter: blur(16px) saturate(150%)`
+ * `colorNeutralBackground1` 半透明色）+ `backdrop-filter`（半径以 index.css 为准）
  * 把这张 Card 直接变成亚克力；没有背景图时该规则不命中，Card 保持默认不透明底色。
  * 暗色模式下主题令牌与 `--ql-surface` 一起重算，两种模式都成立。
  */
