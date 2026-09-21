@@ -1,5 +1,5 @@
 import { useTheme } from '../../appTheme';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   Badge,
@@ -19,21 +19,29 @@ import {
   DialogTitle,
   Field,
   Input,
+  MessageBar,
+  MessageBarBody,
+  SearchBox,
   tokens,
 
   type TableColumnDefinition,
 } from '@fluentui/react-components';
 import { Add24Regular, Key24Regular } from '@fluentui/react-icons';
 import { createTeacher, listTeachers, resetTeacherPassword, updateTeacherActive } from '../../api';
-import type { TeacherItem } from '../../api/types';
+import type { TeacherItem, TempCredential } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, EmptyView, errMessage } from '../../components/StateViews';
 import { PageHeader } from '../../components/PageHeader';
+import { CredentialDialog } from '../../components/CredentialDialog';
+
+/** LI-01：搜索去抖，避免每敲一个字就打一次 `/admin/teachers?q=`。 */
+const SEARCH_DEBOUNCE_MS = 300;
 
 const columns: TableColumnDefinition<TeacherItem>[] = [
   createTableColumn({ columnId: 'username', renderHeaderCell: () => '工号' }),
   createTableColumn({ columnId: 'display_name', renderHeaderCell: () => '姓名' }),
-  createTableColumn({ columnId: 'student_count', renderHeaderCell: () => '绑定学生数' }),
+  createTableColumn({ columnId: 'student_count', renderHeaderCell: () => '名单学生数' }),
+  createTableColumn({ columnId: 'password', renderHeaderCell: () => '改密状态' }),
   createTableColumn({ columnId: 'is_active', renderHeaderCell: () => '状态' }),
   createTableColumn({ columnId: 'actions', renderHeaderCell: () => '操作' }),
 ];
@@ -41,27 +49,37 @@ const columns: TableColumnDefinition<TeacherItem>[] = [
 export function AdminTeacherList() {
   const t = useTheme();
   const navigate = useNavigate();
-  const { data, error, loading, reload } = useAsync(listTeachers, []);
+
+  const [search, setSearch] = useState('');
+  const [debouncedQ, setDebouncedQ] = useState('');
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQ(search.trim()), SEARCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [search]);
+
+  const { data, error, loading, reload } = useAsync(() => listTeachers(debouncedQ), [debouncedQ]);
 
   const [createOpen, setCreateOpen] = useState(false);
-  const [form, setForm] = useState({ username: '', password: '', display_name: '' });
+  const [form, setForm] = useState({ username: '', display_name: '' });
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
-  const [resetTarget, setResetTarget] = useState<TeacherItem | null>(null);
-  const [newPassword, setNewPassword] = useState('');
+  // PW-09：重置返回的临时凭证明细（教师单个重置也是一行）。
+  const [credentials, setCredentials] = useState<TempCredential[] | null>(null);
+  const [credentialTitle, setCredentialTitle] = useState('');
 
   const handleCreate = async () => {
     setFormError(null);
-    if (!form.username.trim() || !form.password || !form.display_name.trim()) {
-      setFormError('工号、密码、姓名均为必填');
+    if (!form.username.trim() || !form.display_name.trim()) {
+      setFormError('工号与姓名均为必填');
       return;
     }
     setBusy(true);
     try {
-      await createTeacher({ username: form.username.trim(), password: form.password, display_name: form.display_name.trim() });
+      // PW-01：新建教师不传密码——统一初始密码 + 首登强制改密。
+      await createTeacher({ username: form.username.trim(), display_name: form.display_name.trim() });
       setCreateOpen(false);
-      setForm({ username: '', password: '', display_name: '' });
+      setForm({ username: '', display_name: '' });
       reload();
     } catch (err) {
       setFormError(errMessage(err));
@@ -81,14 +99,15 @@ export function AdminTeacherList() {
     }
   };
 
-  const handleResetPassword = async () => {
-    if (!resetTarget || !newPassword) return;
+  /** PW-04【v1.1：教师同规则】：不给输入密码的框，后端生成随机密码并返回明细。 */
+  const handleResetPassword = async (item: TeacherItem) => {
+    if (!window.confirm(`确定重置教师「${item.display_name}（${item.username}）」的密码？将生成一个随机密码，原密码立即失效。`)) return;
     setBusy(true);
     try {
-      await resetTeacherPassword(resetTarget.id, newPassword);
-      setResetTarget(null);
-      setNewPassword('');
-      window.alert('密码已重置');
+      const cred = await resetTeacherPassword(item.id);
+      setCredentialTitle(`临时密码 · ${cred.display_name}（${cred.username}）`);
+      setCredentials([cred]);
+      reload();
     } catch (err) {
       window.alert(errMessage(err));
     } finally {
@@ -103,13 +122,24 @@ export function AdminTeacherList() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
       <PageHeader
         title="教师管理"
-        actions={<Button appearance="primary" icon={<Add24Regular />} onClick={() => setCreateOpen(true)}>新建教师</Button>}
+        subtitle="新建教师无需填密码（统一初始密码 + 首登强制改密）。「可教组别」与名单在教师详情里维护。"
+        actions={
+          <>
+            <SearchBox placeholder="按工号或姓名搜索" value={search} onChange={(_, d) => setSearch(d.value)} style={{ width: '240px' }} />
+            <Button appearance="primary" icon={<Add24Regular />} onClick={() => setCreateOpen(true)} disabled={busy}>
+              新建教师
+            </Button>
+          </>
+        }
       />
 
       {data && data.length === 0 ? (
-        <EmptyView title="还没有教师账号" description="点击右上角「新建教师」创建账号。" />
+        <EmptyView
+          title={debouncedQ ? '没有匹配的教师' : '还没有教师账号'}
+          description={debouncedQ ? '换个关键词试试，或清空搜索查看全部教师。' : '点击右上角「新建教师」创建账号。'}
+        />
       ) : (
-        <DataGrid items={data ?? []} columns={columns} focusMode="cell" resizableColumns>
+        <DataGrid items={data ?? []} columns={columns} focusMode="cell" resizableColumns getRowId={(item) => item.id}>
           <DataGridHeader>
             <DataGridRow>
               {({ renderHeaderCell }) => <DataGridHeaderCell>{renderHeaderCell()}</DataGridHeaderCell>}
@@ -127,6 +157,11 @@ export function AdminTeacherList() {
                       </Link>
                     )}
                     {columnId === 'student_count' && item.student_count}
+                    {columnId === 'password' && (
+                      item.must_change_password
+                        ? <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteDarkOrangeForeground1, backgroundColor: t.colorPaletteDarkOrangeBackground2 }}>未改密</Badge>
+                        : <Badge className="ql-badge-status" appearance="outline" size="large">已改密</Badge>
+                    )}
                     {columnId === 'is_active' && (
                       item.is_active
                         ? <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>启用</Badge>
@@ -134,10 +169,10 @@ export function AdminTeacherList() {
                     )}
                     {columnId === 'actions' && (
                       <div style={{ display: 'flex', gap: tokens.spacingHorizontalXS }}>
-                        <Button size="small" appearance="subtle" icon={<Key24Regular />} onClick={() => { setResetTarget(item); setNewPassword(''); }}>
+                        <Button size="small" appearance="subtle" icon={<Key24Regular />} disabled={busy} onClick={() => void handleResetPassword(item)}>
                           重置密码
                         </Button>
-                        <Button size="small" appearance="subtle" onClick={() => void handleToggleActive(item)}>
+                        <Button size="small" appearance="subtle" disabled={busy} onClick={() => void handleToggleActive(item)}>
                           {item.is_active ? '停用' : '启用'}
                         </Button>
                         <Button size="small" appearance="subtle" onClick={() => navigate(`/admin/teachers/${item.id}`)}>
@@ -165,9 +200,11 @@ export function AdminTeacherList() {
                 <Field label="姓名" required>
                   <Input value={form.display_name} onChange={(_, d) => setForm({ ...form, display_name: d.value })} />
                 </Field>
-                <Field label="初始密码" required>
-                  <Input type="password" value={form.password} onChange={(_, d) => setForm({ ...form, password: d.value })} />
-                </Field>
+                <MessageBar intent="info" style={{ borderRadius: tokens.borderRadiusMedium }}>
+                  <MessageBarBody>
+                    初始密码由系统统一发放（统一初始密码），这里不需要填写；该教师首次登录时会被强制改密。
+                  </MessageBarBody>
+                </MessageBar>
                 {formError && <Caption1 style={{ color: t.colorPaletteRedForeground1 }}>{formError}</Caption1>}
               </div>
             </DialogContent>
@@ -179,22 +216,13 @@ export function AdminTeacherList() {
         </DialogSurface>
       </Dialog>
 
-      <Dialog open={resetTarget !== null} onOpenChange={(_, d) => { if (!d.open) setResetTarget(null); }}>
-        <DialogSurface>
-          <DialogBody>
-            <DialogTitle>重置密码 · {resetTarget?.display_name}</DialogTitle>
-            <DialogContent>
-              <Field label="新密码" required>
-                <Input type="password" value={newPassword} onChange={(_, d) => setNewPassword(d.value)} autoFocus />
-              </Field>
-            </DialogContent>
-            <DialogActions>
-              <Button appearance="secondary" onClick={() => setResetTarget(null)} disabled={busy}>取消</Button>
-              <Button appearance="primary" onClick={handleResetPassword} disabled={busy || !newPassword}>确认重置</Button>
-            </DialogActions>
-          </DialogBody>
-        </DialogSurface>
-      </Dialog>
+      <CredentialDialog
+        open={credentials !== null}
+        onOpenChange={(next) => { if (!next) setCredentials(null); }}
+        title={credentialTitle}
+        credentials={credentials ?? []}
+        csvPrefix="教师重置凭证"
+      />
     </div>
   );
 }
