@@ -1,7 +1,9 @@
 """学生批量导入命令行兜底（与 admin 页面导入同一套解析逻辑）。
 
-支持 .xlsx / .txt / .csv，格式均为「学生ID[,|，]姓名[,|，]组别」，组别列可空、
-多组用 、，,；;/ 分隔，不存在的组自动创建。
+支持 .xlsx / .txt / .csv，格式均为「学生ID[,|，]姓名[,|，]组别[,|，]教师」，组别与教师列可空、
+多值用 、，,；;/ 分隔，不存在的组自动创建；教师列写的是教师用户名，只写「组-教师分配」，
+不会把学生拉进该教师的名单（名单由教师本人在自己可教的组里拉）。
+新学生的密码统一是初始密码，首次登录会被强制改密。
 """
 import sys
 from pathlib import Path
@@ -25,11 +27,12 @@ def main():
     try:
         try:
             rows, failures = parse_import_file(path.name, path.read_bytes())
-            result = process_import_rows(db, rows, failures)
+            # 命令行没有登录态，审计的 actor_id 记 NULL（与页面导入同一套落库逻辑）
+            result = process_import_rows(db, None, rows, failures)
         except APIError as e:
             print(f"导入失败: [{e.code}] {e.message}")
             sys.exit(1)
-        print(f"成功导入 {result.success_count} 名学生，初始密码为学号")
+        print(f"成功导入 {result.success_count} 名学生，初始密码统一、首登强制改密")
         for f in result.failures:
             shown = f.username or f.content
             print(f"第 {f.line} 行失败: {shown!r} —— {f.reason}")

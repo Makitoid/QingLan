@@ -1,8 +1,11 @@
-"""学生分组（groups / group_members）共用服务：admin 与 teacher 两端复用。
+"""学生分组（groups / group_members）与「组-教师分配」（teacher_groups）共用服务。
 
-约定：
-- 组由管理员创建/维护，全站共享；教师只读组定义，可调整自己绑定学生的组成员关系。
+约定（0.3.0 方案 B / GR-01）：
+- 组是全站唯一的组织概念（行政班），**admin 是层 1 成员关系与层 2 组-教师分配的唯一写者**；
+  教师对该两层只读（教师端写接口已随 GR-02 删除），只能在可教组内维护自己的学生名单（层 3）。
 - 所有写操作单事务：先全量校验、后写入，任何一项不合法整批拒绝，不存在部分成功。
+- 需要「写操作 + 审计同事务」的调用方（admin 端）使用不提交的 `*_changes` /
+  `assign_teacher_groups`，自行 `log_audit` 后 commit；无审计需求的调用方用提交版包装。
 """
 from __future__ import annotations
 
@@ -11,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..core.security import APIError
-from ..models import Group, GroupMember, User
+from ..models import Group, GroupMember, TeacherGroup, User
 from ..schemas import GroupRef
 
 MAX_GROUP_NAME_LEN = 50
@@ -138,10 +141,12 @@ def membership_pairs(db: Session, student_ids: list[int], group_ids: list[int]) 
     return {(group_id, student_id) for group_id, student_id in rows}
 
 
-def apply_membership(db: Session, student_ids: list[int], group_ids: list[int], action: str) -> int:
-    """幂等增删成员关系：add 用差集插入，remove 直接删除；单事务提交。
+def apply_membership_changes(db: Session, student_ids: list[int], group_ids: list[int],
+                             action: str) -> int:
+    """幂等增删成员关系，**不 commit**（供 admin 端把审计写进同一事务）。
 
-    返回实际写入/删除的「学生×组」条数。调用方需先完成权限校验。
+    add 用差集插入，remove 直接删除。返回实际写入/删除的「学生×组」条数。
+    校验不过整批抛出，调用方需自行回滚。
     """
     students = list(dict.fromkeys(student_ids))
     groups = list(dict.fromkeys(group_ids))
@@ -156,17 +161,24 @@ def apply_membership(db: Session, student_ids: list[int], group_ids: list[int], 
 
     target = {(gid, sid) for gid in groups for sid in students}
     existing = membership_pairs(db, students, groups)
-    try:
+    if action == "add":
+        pairs = sorted(target - existing)
+    elif action == "remove":
+        pairs = sorted(existing & target)
+    else:
+        raise APIError(422, "VALIDATION_ERROR", "action 仅支持 add / remove")
+    for group_id, student_id in pairs:
         if action == "add":
-            for group_id, student_id in sorted(target - existing):
-                db.add(GroupMember(group_id=group_id, student_id=student_id))
-            changed = len(target - existing)
-        elif action == "remove":
-            for group_id, student_id in sorted(existing & target):
-                db.delete(db.get(GroupMember, (group_id, student_id)))
-            changed = len(existing & target)
+            db.add(GroupMember(group_id=group_id, student_id=student_id))
         else:
-            raise APIError(422, "VALIDATION_ERROR", "action 仅支持 add / remove")
+            db.delete(db.get(GroupMember, (group_id, student_id)))
+    return len(pairs)
+
+
+def apply_membership(db: Session, student_ids: list[int], group_ids: list[int], action: str) -> int:
+    """`apply_membership_changes` 的单事务提交版（审计由调用方另行处理）。"""
+    try:
+        changed = apply_membership_changes(db, student_ids, group_ids, action)
         db.commit()
     except APIError:
         db.rollback()
@@ -175,6 +187,39 @@ def apply_membership(db: Session, student_ids: list[int], group_ids: list[int], 
         db.rollback()
         raise APIError(409, "MEMBERSHIP_CONFLICT", "成员关系写入冲突，请重试")
     return changed
+
+
+def teacher_group_pairs(db: Session, teacher_ids: list[int]) -> set[tuple[int, int]]:
+    """已有分配集合，幂等写入前的一次联查。"""
+    if not teacher_ids:
+        return set()
+    return {
+        (tid, gid)
+        for tid, gid in db.execute(
+            select(TeacherGroup.teacher_id, TeacherGroup.group_id)
+            .where(TeacherGroup.teacher_id.in_(teacher_ids))
+        ).all()
+    }
+
+
+def assign_teacher_groups(db: Session, pairs: list[tuple[int, int]]) -> int:
+    """幂等写入层 2「组-教师分配」（BD-02 / IM-01）：已存在的不重复插。
+
+    只 db.add、**不 commit** —— 导入时这批关系要与建号同事务，由调用方提交。
+    返回实际新增的条数（同批重复项只算一次）。
+    """
+    wanted = list(dict.fromkeys((int(tid), int(gid)) for tid, gid in pairs if tid and gid))
+    if not wanted:
+        return 0
+    existing = teacher_group_pairs(db, sorted({tid for tid, _ in wanted}))
+    added = 0
+    for tid, gid in wanted:
+        if (tid, gid) in existing:
+            continue
+        db.add(TeacherGroup(teacher_id=tid, group_id=gid))
+        existing.add((tid, gid))  # 未提交前查不到自己，同批去重靠这个集合
+        added += 1
+    return added
 
 
 def validate_student_ids(db: Session, student_ids: list[int]) -> list[User]:
