@@ -46,6 +46,16 @@ def _group_by_student(submissions: list[Submission]) -> dict[int, list[Submissio
     return grouped
 
 
+def _problems_by_id(db: Session, assignment_problems: list[AssignmentProblem]) -> dict[int, Problem]:
+    """题单涉及的题目一次取回（供每题列取标题；题目被删则缺项，调用侧按空标题兜底）。"""
+    problem_ids = {ap.problem_id for ap in assignment_problems}
+    if not problem_ids:
+        return {}
+    return {p.id: p for p in db.execute(
+        select(Problem).where(Problem.id.in_(problem_ids))
+    ).scalars()}
+
+
 def overview(db: Session, assignment: Assignment) -> dict:
     students = bound_students(db, assignment.created_by)
     student_ids = {s.id for s in students}
@@ -91,26 +101,53 @@ def overview(db: Session, assignment: Assignment) -> dict:
 
 
 def student_rows(db: Session, assignment: Assignment) -> list[dict]:
+    """逐学生成绩行（SC-01）。
+
+    - best_effective_score：语义是「各题有效分里的最高单题分」，不是本场总分；
+      名字沿用历史契约以保持算法/口径不变，多题场次的合计请看 total_score。
+    - total_score = Σ(problem_scores 中非 None 的有效分)，即题单内各题有效分之和，
+      与 SC-02 导出的「总分」列同源。
+    题目与提交各取一次（submissions 一次全取、problems 一次 in 查询），不在学生循环里查库。
+    """
     students = bound_students(db, assignment.created_by)
     all_subs = db.execute(
         select(Submission).where(Submission.assignment_id == assignment.id)
     ).scalars().all()
 
+    ordered_problems = assignment_problems_ordered(db, assignment.id)
+    problems = _problems_by_id(db, ordered_problems)
+    subs_by_student = _group_by_student(all_subs)
+
     rows = []
     for student in students:
-        mine = [s for s in all_subs if s.user_id == student.id]
-        best = 0.0
-        if mine:
-            by_problem: dict[int, list[Submission]] = {}
-            for s in mine:
-                by_problem.setdefault(s.problem_id, []).append(s)
-            values = []
-            for s_list in by_problem.values():
-                value = scoring.aggregate_scores(s_list, assignment.score_policy)
-                if value is not None:
-                    values.append(value)
-            if values:
-                best = round(max(values), 1)
+        mine = subs_by_student.get(student.id, [])
+        by_problem: dict[int, list[Submission]] = {}
+        for s in mine:
+            by_problem.setdefault(s.problem_id, []).append(s)
+        # 每题有效分：题单内的题按 seq 逐列输出，题单外（题目已移出题单）的提交
+        # 仍参与 best 的计算，但不计入 total_score —— 总分要和导出列对得上。
+        effective_by_problem = {
+            problem_id: scoring.aggregate_scores(s_list, assignment.score_policy)
+            for problem_id, s_list in by_problem.items()
+        }
+        values = [v for v in effective_by_problem.values() if v is not None]
+        best = round(max(values), 1) if values else 0.0
+
+        problem_scores = []
+        total = 0.0
+        for ap in ordered_problems:
+            problem = problems.get(ap.problem_id)
+            value = effective_by_problem.get(ap.problem_id)
+            if value is not None:
+                total += value
+            problem_scores.append({
+                "problem_id": ap.problem_id,
+                "seq": ap.seq,
+                "title": problem.title if problem else "",
+                "full_score": ap.full_score,
+                "effective_score": value,
+            })
+
         last_submitted_at = max((s.submitted_at for s in mine), default=None)
         rows.append({
             "student_id": student.id,
@@ -118,6 +155,8 @@ def student_rows(db: Session, assignment: Assignment) -> list[dict]:
             "name": student.display_name,
             "submitted_count": len(mine),
             "best_effective_score": best,
+            "total_score": round(total, 1),
+            "problem_scores": problem_scores,
             "last_submitted_at": last_submitted_at,
         })
     return rows
