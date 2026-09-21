@@ -17,6 +17,8 @@ class UserOut(ORMModel):
     username: str
     role: str
     display_name: str
+    # PW-02：前端刷新页面后据此恢复强制改密拦截态
+    must_change_password: bool = False
 
 
 class TokenResponse(BaseModel):
@@ -25,8 +27,9 @@ class TokenResponse(BaseModel):
 
 
 class AccountCreate(BaseModel):
+    """PW-01：admin 不再手填初始密码 —— 统一 `12345678` + 首登强制改密。"""
+
     username: str
-    password: str = Field(min_length=6)
     display_name: str
 
 
@@ -34,8 +37,21 @@ class IsActivePatch(BaseModel):
     is_active: bool
 
 
-class ResetPasswordRequest(BaseModel):
-    new_password: str = Field(min_length=6)
+class TempCredentialOut(BaseModel):
+    """PW-09 凭证明细的一行；单个重置（学生/教师）即直接返回本对象。"""
+
+    student_id: int
+    username: str
+    display_name: str
+    temp_password: str
+    # None = 不过期（统一/初始密码）；随机密码为 UTC 串
+    expires_at: str | None = None
+
+
+class BatchResetResultOut(BaseModel):
+    mode: str
+    count: int
+    credentials: list[TempCredentialOut]
 
 
 class TeacherOut(ORMModel):
@@ -43,6 +59,7 @@ class TeacherOut(ORMModel):
     username: str
     display_name: str
     is_active: int
+    must_change_password: bool = False
     created_at: str
     student_count: int = 0
 
@@ -57,6 +74,8 @@ class StudentOut(ORMModel):
     username: str
     display_name: str
     is_active: int
+    # LI-02：未改密徽标
+    must_change_password: bool = False
     created_at: str
     teachers: list[UserOut] = []
     groups: list[GroupRef] = []
@@ -93,12 +112,60 @@ class BoundStudentOut(ORMModel):
     username: str
     display_name: str
     is_active: int
+    must_change_password: bool = False
     groups: list[GroupRef] = []
 
 
 class BatchResetPasswordRequest(BaseModel):
+    """PW-06：mode = unified（全员统一初始密码）| random（逐生独立随机密码）。"""
+
     student_ids: list[int]
-    new_password: str = Field(min_length=6)
+    mode: Literal["unified", "random"] = "random"
+
+
+class TeacherGroupsRequest(BaseModel):
+    """BD-02：全量替换某教师可教的组。"""
+
+    group_ids: list[int]
+
+
+class TeacherGroupsOut(BaseModel):
+    teacher_id: int
+    group_ids: list[int]
+
+
+class ClassStudentOut(BaseModel):
+    """BD-03：可教组内的成员；停用学生照常返回并由 is_active 标注。"""
+
+    id: int
+    username: str
+    display_name: str
+    is_active: int
+    # 是否已在自己的名单里，前端据此把「拉入」按钮置灰
+    bound: bool = False
+
+
+class ClassOut(BaseModel):
+    id: int
+    name: str
+    member_count: int
+    students: list[ClassStudentOut] = []
+
+
+class AuditLogOut(BaseModel):
+    id: int
+    actor_id: int | None
+    actor_name: str = ""
+    action: str
+    target_type: str
+    target_id: int | None
+    detail: dict | None = None
+    created_at: str
+
+
+class AuditLogPageOut(BaseModel):
+    items: list[AuditLogOut]
+    total: int
 
 
 class BatchActiveRequest(BaseModel):
@@ -143,7 +210,7 @@ class SettingsUpdate(BaseModel):
 
 class PasswordChangeRequest(BaseModel):
     old_password: str
-    new_password: str = Field(min_length=6)
+    new_password: str = Field(min_length=8)
 
 
 class ProblemCreate(BaseModel):
@@ -345,12 +412,25 @@ class OverviewOut(BaseModel):
     histogram: list[HistogramBin]
 
 
+class StudentProblemScoreOut(BaseModel):
+    """SC-01：某生在某题上的有效分（未提交为 None）。"""
+
+    problem_id: int
+    seq: int
+    title: str
+    full_score: float
+    effective_score: float | None = None
+
+
 class StudentRowOut(BaseModel):
     student_id: int
     username: str = ""
     name: str
     submitted_count: int
+    # 语义即「最高单题分」（SC-01/02 更名），新增 total_score 才是本场总分
     best_effective_score: float
+    total_score: float = 0.0
+    problem_scores: list[StudentProblemScoreOut] = []
     last_submitted_at: str | None = None
 
 

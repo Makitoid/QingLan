@@ -18,6 +18,10 @@ class User(Base):
     role = Column(Text, nullable=False)
     display_name = Column(Text, nullable=False)
     is_active = Column(Integer, nullable=False, server_default=text("1"))
+    # PW-01/02：新建与重置后一律 1，首登被强制改密（前端路由级 + 后端 API 拦截）
+    must_change_password = Column(Integer, nullable=False, server_default=text("1"))
+    # PW-05：随机临时密码 7 天过期的唯一锚点；NULL = 不过期（统一/初始密码、自助改密后）
+    password_updated_at = Column(Text)
     created_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))
 
 
@@ -46,6 +50,17 @@ class GroupMember(Base):
 
     group_id = Column(Integer, ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True)
     student_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+
+
+class TeacherGroup(Base):
+    """层 2「组-教师分配」（BD-02）：谁可教哪个行政班，唯一写者是 admin。"""
+
+    __tablename__ = "teacher_groups"
+    __table_args__ = (Index("idx_teacher_groups_group", "group_id"),)
+
+    teacher_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    group_id = Column(Integer, ForeignKey("groups.id", ondelete="CASCADE"), primary_key=True)
+    created_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))
 
 
 class Problem(Base):
@@ -128,6 +143,7 @@ class Submission(Base):
     verdict = Column(Text)
     score = Column(Float)
     manual_score = Column(Float)
+    manual_score_updated_at = Column(Text)
     worker_id = Column(Text)
     judge_log = Column(Text)
     submitted_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))
@@ -145,6 +161,27 @@ class SubmissionResult(Base):
     time_ms = Column(Integer, nullable=False)
     memory_kb = Column(Integer, nullable=False)
     score = Column(Float, nullable=False)
+
+
+class AuditLog(Base):
+    """只追加的操作台账（AU-01~05）：不提供任何 UPDATE/DELETE 路径。
+
+    actor_id 有意不设 CASCADE —— 系统从不删用户，但即使删了也不能级联清除日志。
+    """
+
+    __tablename__ = "audit_log"
+    __table_args__ = (
+        Index("idx_audit_log_actor", "actor_id"),
+        Index("idx_audit_log_action", "action"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    actor_id = Column(Integer, ForeignKey("users.id"))
+    action = Column(Text, nullable=False)
+    target_type = Column(Text, nullable=False)
+    target_id = Column(Integer)
+    detail = Column(Text)
+    created_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))
 
 
 class SiteSetting(Base):
