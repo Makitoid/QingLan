@@ -1,5 +1,4 @@
 import json
-from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends
 from fastapi.responses import StreamingResponse
@@ -9,12 +8,14 @@ from sqlalchemy.orm import Session
 
 from .. import schemas
 from ..core.db import get_db
-from ..core.security import APIError, require_teacher
-from ..models import (Assignment, AssignmentProblem, Group, Problem,
-                      Submission, SubmissionResult, TestCase, User)
+from ..core.security import APIError, require_teacher, utcnow_str
+from ..models import (Assignment, AssignmentProblem, Group, GroupMember,
+                      Problem, Submission, SubmissionResult, TeacherGroup,
+                      TeacherStudent, TestCase, User)
 from ..services import export as export_svc
 from ..services import groups as groups_svc
 from ..services import stats, visibility
+from ..services.audit import log_audit
 
 router = APIRouter()
 
@@ -23,10 +24,6 @@ router = APIRouter()
 
 COMPARE_MODES = {"exact", "trim", "float"}
 SCORE_POLICIES = {"best", "last"}
-
-
-def _utcnow() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
 def _normalize(text_value: str) -> str:
@@ -200,7 +197,7 @@ def save_problem_draft(problem_id: int, body: schemas.ProblemDraft,
     if body.compare_mode not in COMPARE_MODES:
         raise APIError(422, "VALIDATION_ERROR", "比对模式不合法")
     problem.draft = json.dumps(body.model_dump(), ensure_ascii=False)
-    problem.draft_saved_at = _utcnow()
+    problem.draft_saved_at = utcnow_str()
     db.commit()
     return schemas.ProblemDraftSavedOut(draft_saved_at=problem.draft_saved_at)
 
@@ -328,7 +325,7 @@ def get_assignment(assignment_id: int,
 def update_assignment(assignment_id: int, body: schemas.AssignmentUpdate,
                       db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
     assignment = _get_owned_assignment(db, teacher, assignment_id)
-    if _utcnow() >= assignment.start_time:
+    if utcnow_str() >= assignment.start_time:
         raise APIError(409, "ALREADY_STARTED", "场次已开始，不可修改")
     changes = body.model_dump(exclude_unset=True)
     if "problems" in changes:
@@ -371,10 +368,10 @@ def update_assignment(assignment_id: int, body: schemas.AssignmentUpdate,
 def release_assignment(assignment_id: int,
                        db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
     assignment = _get_owned_assignment(db, teacher, assignment_id)
-    if assignment.mode != "test" or _utcnow() <= assignment.end_time:
+    if assignment.mode != "test" or utcnow_str() <= assignment.end_time:
         raise APIError(409, "NOT_RELEASABLE", "仅测试模式且已过结束时间的场次可放出")
     assignment.released = 1
-    assignment.released_at = _utcnow()
+    assignment.released_at = utcnow_str()
     db.commit()
     db.refresh(assignment)
     return _assignment_out(db, assignment)
@@ -415,6 +412,7 @@ def get_submission(submission_id: int,
 @router.post("/submissions/{submission_id}/rejudge", response_model=schemas.SubmissionDetailOut)
 def rejudge_submission(submission_id: int,
                        db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """重判：清空判定结果回到 pending（附录 A scoring.rejudge_resets 全清单）。"""
     submission = _get_owned_submission(db, teacher, submission_id)
     results = db.execute(
         select(SubmissionResult).where(SubmissionResult.submission_id == submission.id)
@@ -427,6 +425,10 @@ def rejudge_submission(submission_id: int,
     submission.judged_at = None
     submission.worker_id = None
     submission.judge_log = None
+    # SC-04：人工调分必须一并作废 —— 否则旧调分会以「覆盖系统分」的优先级残留下来，
+    # 把新判出来的成绩顶掉，造成计分错误。
+    submission.manual_score = None
+    submission.manual_score_updated_at = None
     db.commit()
     db.refresh(submission)
     return _submission_detail(db, submission)
@@ -435,18 +437,89 @@ def rejudge_submission(submission_id: int,
 @router.patch("/submissions/{submission_id}/score", response_model=schemas.SubmissionDetailOut)
 def patch_manual_score(submission_id: int, body: schemas.ManualScorePatch,
                        db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """人工调分（SC-03）：null = 撤销调分；非 null 须落在 0 ~ 该题在本场次的满分之间。"""
     submission = _get_owned_submission(db, teacher, submission_id)
+    full_score = db.scalar(
+        select(AssignmentProblem.full_score)
+        .where(AssignmentProblem.assignment_id == submission.assignment_id,
+               AssignmentProblem.problem_id == submission.problem_id)
+    )
+    old_score = submission.manual_score
+    if body.manual_score is not None:
+        # 查不到 assignment_problem（题单已被改/数据异常）时无满分上界可依，同样拒绝。
+        if full_score is None:
+            raise APIError(422, "MANUAL_SCORE_OUT_OF_RANGE", "该题未在本场次中配置分值，无法调分")
+        if not 0 <= body.manual_score <= full_score:
+            raise APIError(422, "MANUAL_SCORE_OUT_OF_RANGE", f"调分必须在 0 ~ {full_score:g} 之间")
     submission.manual_score = body.manual_score
+    submission.manual_score_updated_at = utcnow_str() if body.manual_score is not None else None
+    log_audit(db, teacher, "score_manual_adjust", "submission", submission.id,
+              {"old": old_score, "new": body.manual_score, "full_score": full_score})
     db.commit()
     db.refresh(submission)
     return _submission_detail(db, submission)
 
 
-# ---------- 学生与分组（教师端无任何密码接口）----------
+# ---------- 学生名单与班级（教师端无任何密码接口；组别对本模块只读）----------
+#
+# 三层归属模型（BD-01~05）：
+#   层 1  groups / group_members —— admin 唯一写者；教师只能读到「自己可教的组」，
+#         且只经 /classes 这一条路径（GR-02：/groups 与批量改组成员接口已废弃）。
+#   层 2  teacher_groups         —— admin 分配哪个教师可教哪个组。
+#   层 3  teacher_students       —— 教师自己的名单，唯一写者是教师本人，且只能在
+#         可教组内（主路径）或按有效学号（兜底）拉人，拉/移均幂等。
+#
+# 与既有风格一致：所有写操作单事务，先全量校验、后写入，任一不合法整批拒绝。
+
+
+def _requested_student_ids(raw: list[int]) -> list[int]:
+    """去重保序；空选择在写库之前就拦下。"""
+    ids = list(dict.fromkeys(raw))
+    if not ids:
+        raise APIError(422, "EMPTY_SELECTION", "未选择任何学生")
+    return ids
+
+
+def _my_student_ids(db: Session, teacher_id: int) -> set[int]:
+    """我的名单（层 3）里的学生 ID。"""
+    return set(db.execute(
+        select(TeacherStudent.student_id).where(TeacherStudent.teacher_id == teacher_id)
+    ).scalars().all())
+
+
+def _teachable_group_ids(db: Session, teacher_id: int) -> set[int]:
+    """我经 teacher_groups 可教的组 ID（层 2）。"""
+    return set(db.execute(
+        select(TeacherGroup.group_id).where(TeacherGroup.teacher_id == teacher_id)
+    ).scalars().all())
+
+
+def _bind_students(db: Session, teacher: User, student_ids: list[int], source: str) -> int:
+    """幂等拉入名单并写审计（层 3 的唯一写路径），返回实际新增条数。
+
+    权限校验由调用方在写库之前完成，保证「先校验后写入」的单事务语义。
+    """
+    existing = _my_student_ids(db, teacher.id)
+    added = [sid for sid in student_ids if sid not in existing]
+    for sid in added:
+        db.add(TeacherStudent(teacher_id=teacher.id, student_id=sid))
+    log_audit(db, teacher, "teacher_student_bind", "teacher", teacher.id,
+              {"count": len(added), "student_ids": added, "source": source})
+    db.commit()
+    return len(added)
+
 
 @router.get("/students", response_model=list[schemas.BoundStudentOut])
-def list_bound_students(db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
-    students = stats.bound_students(db, teacher.id)
+def list_bound_students(q: str | None = None,
+                        db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """我的名单（层 3）。q 为 username / display_name 的模糊匹配（大小写不敏感），缺省时行为不变。"""
+    students = list(stats.bound_students(db, teacher.id))
+    keyword = (q or "").strip().lower()
+    if keyword:
+        students = [
+            s for s in students
+            if keyword in s.username.lower() or keyword in (s.display_name or "").lower()
+        ]
     group_map = groups_svc.groups_map_for_students(db, [s.id for s in students])
     return [
         schemas.BoundStudentOut(
@@ -454,30 +527,107 @@ def list_bound_students(db: Session = Depends(get_db), teacher: User = Depends(r
             username=s.username,
             display_name=s.display_name,
             is_active=s.is_active,
+            must_change_password=bool(s.must_change_password),
             groups=group_map.get(s.id, []),
         )
         for s in students
     ]
 
 
-@router.get("/groups", response_model=list[schemas.GroupOut])
-def list_groups(db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
-    """组定义全站共享，教师只读。"""
-    return [
-        schemas.GroupOut(id=g.id, name=g.name, created_at=g.created_at, member_count=count)
-        for g, count in groups_svc.list_groups_with_count(db)
-    ]
+@router.get("/classes", response_model=list[schemas.ClassOut])
+def list_my_classes(db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """我可教的班级及其成员（层 1 只读视图，按组名排序；教师端唯一的组入口）。
+
+    停用的学生照常返回、由 is_active 标注（BD-03）；bound 表示该生已在我的名单里，
+    前端据此把「拉入」按钮置灰。没有可教的组时返回空列表。
+    """
+    groups = db.execute(
+        select(Group)
+        .join(TeacherGroup, TeacherGroup.group_id == Group.id)
+        .where(TeacherGroup.teacher_id == teacher.id)
+        .order_by(Group.name, Group.id)
+    ).scalars().all()
+    if not groups:
+        return []
+    roster = _my_student_ids(db, teacher.id)
+    rows = db.execute(
+        select(GroupMember.group_id, User.id, User.username, User.display_name, User.is_active)
+        .join(User, User.id == GroupMember.student_id)
+        .where(GroupMember.group_id.in_([g.id for g in groups]), User.role == "student")
+        .order_by(GroupMember.group_id, User.id)
+    ).all()
+    members: dict[int, list[schemas.ClassStudentOut]] = {}
+    for group_id, student_id, username, display_name, is_active in rows:
+        members.setdefault(group_id, []).append(schemas.ClassStudentOut(
+            id=student_id,
+            username=username,
+            display_name=display_name,
+            is_active=is_active,
+            bound=student_id in roster,
+        ))
+    out = []
+    for g in groups:
+        students = members.get(g.id, [])
+        out.append(schemas.ClassOut(id=g.id, name=g.name,
+                                    member_count=len(students), students=students))
+    return out
 
 
-@router.post("/students/group_members", response_model=schemas.GroupMembershipOut)
-def batch_group_members(body: schemas.GroupMembersRequest,
-                        db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
-    """批量加入/移出分组：先校验 student_ids ⊆ 绑定学生集合，越权则整批 403 拒绝。"""
-    student_ids = list(dict.fromkeys(body.student_ids))
-    if not student_ids:
-        raise APIError(422, "EMPTY_SELECTION", "未选择任何学生")
-    bound_ids = {s.id for s in stats.bound_students(db, teacher.id)}
-    if not set(student_ids) <= bound_ids:
-        raise APIError(403, "STUDENT_NOT_BOUND", "存在未绑定到本教师的学生，操作已整批取消")
-    changed = groups_svc.apply_membership(db, student_ids, body.group_ids, body.action)
-    return schemas.GroupMembershipOut(success_count=changed)
+@router.post("/students/bind_from_class", response_model=schemas.GroupMembershipOut)
+def bind_students_from_class(body: schemas.BindStudentsRequest,
+                             db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """BD-03 主路径：把可教班级里的学生拉进我的名单（幂等）。
+
+    任一 student_id 不属于我可教的组 → 整批 403 且不写库，不存在部分成功。
+    """
+    student_ids = _requested_student_ids(body.student_ids)
+    group_ids = _teachable_group_ids(db, teacher.id)
+    in_class: set[int] = set()
+    if group_ids:
+        in_class = set(db.execute(
+            select(GroupMember.student_id)
+            .join(User, User.id == GroupMember.student_id)
+            .where(GroupMember.group_id.in_(sorted(group_ids)),
+                   GroupMember.student_id.in_(student_ids),
+                   User.role == "student")
+        ).scalars().all())
+    if set(student_ids) != in_class:
+        raise APIError(403, "STUDENT_NOT_IN_CLASS", "存在不属于我可教班级的学生，操作已整批取消")
+    added = _bind_students(db, teacher, student_ids, "class")
+    return schemas.GroupMembershipOut(success_count=added)
+
+
+@router.post("/students/bind", response_model=schemas.GroupMembershipOut)
+def bind_students_by_ids(body: schemas.BindStudentsRequest,
+                         db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """BD-04 兜底：按学生 ID 直接拉入名单，覆盖转学生/旁听等「暂不在组」场景。
+
+    仅校验 role=student 且账号有效；响应只回条数、不回学生明细，
+    免得这个接口变成教师端的全量学生名册。
+    """
+    student_ids = _requested_student_ids(body.student_ids)
+    valid = set(db.execute(
+        select(User.id)
+        .where(User.id.in_(student_ids), User.role == "student", User.is_active == 1)
+    ).scalars().all())
+    if valid != set(student_ids):
+        raise APIError(422, "INVALID_STUDENT_IDS", "存在无效、非学生或已停用的账号")
+    added = _bind_students(db, teacher, student_ids, "manual")
+    return schemas.GroupMembershipOut(success_count=added)
+
+
+@router.post("/students/unbind", response_model=schemas.GroupMembershipOut)
+def unbind_students(body: schemas.BindStudentsRequest,
+                    db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """BD-05：只能从自己的名单里移除；不在名单里的直接忽略（幂等，不算错）。
+
+    移除后历史提交/成绩保留，教师统计仍可见（见 specs「移除学生后历史成绩可见性」）。
+    """
+    student_ids = _requested_student_ids(body.student_ids)
+    removed = sorted(_my_student_ids(db, teacher.id) & set(student_ids))
+    for sid in removed:
+        db.delete(db.get(TeacherStudent, (teacher.id, sid)))
+    log_audit(db, teacher, "teacher_student_unbind", "teacher", teacher.id,
+              {"count": len(removed), "student_ids": removed})
+    db.commit()
+    return schemas.GroupMembershipOut(success_count=len(removed))
