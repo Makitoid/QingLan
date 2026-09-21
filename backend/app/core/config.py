@@ -24,5 +24,18 @@ SUBMIT_COOLDOWN_S = 2
 MAX_CODE_BYTES = 64 * 1024
 CE_STDERR_LIMIT = 4096
 
+# ---------- 密码与凭证（0.3.0 批次 PW）----------
+# 新建账号/统一重置的初始密码（PW-01），明文只用于告知，入库仍是 bcrypt
+DEFAULT_INITIAL_PASSWORD = "12345678"
+PASSWORD_MIN_LENGTH = 8
+TEMP_PASSWORD_LENGTH = 8
+# 排除易混字符 0 O 1 l I o，共 56 个（PW-08，以修改意见附录 A 的 JSON 为准）
+TEMP_PASSWORD_CHARSET = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+TEMP_PASSWORD_EXPIRE_DAYS = 7
+# 批量重置超过该人数时前端询问「统一初始密码 / 各自随机」（PW-06）
+BATCH_RESET_ASK_THRESHOLD = 20
+# 随机模式大批量时并行 bcrypt 的线程数（bcrypt 释放 GIL）
+BCRYPT_PARALLEL_WORKERS = 8
+
 for _d in (DATA_DIR, CODES_DIR, CASES_DIR, BG_DIR):
     _d.mkdir(parents=True, exist_ok=True)
