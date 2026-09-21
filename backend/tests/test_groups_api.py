@@ -1,24 +1,35 @@
-"""v2.0 批次 API 测试：学生分组 / 批量操作 / 题目草稿 / 权限红线。
+"""0.3.0 批次 M6：分组 / 批量操作 / 三层归属名单 / 题目草稿 / 权限红线。
 
-范围说明：本文件只覆盖「分组、批量、草稿、权限红线」；xlsx/txt/csv 导入与成绩导出
-不在本文件内（由导入导出专项测试负责）。
+范围说明：本文件只覆盖「分组、批量、教师名单、草稿、权限红线」；xlsx/txt/csv 导入与成绩导出
+由 tests/test_import_export.py 负责，auth 侧密码流程由 tests/test_password_flow.py 负责。
 
 契约以代码实际行为为准（app/api/admin.py、app/api/teacher.py、app/services/groups.py、
 app/schemas.py、app/main.py），要点：
 - 错误响应体统一为 ``{"code": "...", "message": "..."}``（app/main.py 两个 exception_handler），
   无 HTTP status 字段；pydantic 校验失败也走 422 + code=VALIDATION_ERROR。
-- 分组：``GroupOut{id,name,created_at,member_count}``；``GroupCreate/GroupUpdate{name}``（1~50 字）。
-  重名 409 GROUP_NAME_EXISTS；不存在 404 GROUP_NOT_FOUND；名超 50 字由 schema ``max_length``
-  拦成 422 VALIDATION_ERROR（``GROUP_NAME_INVALID`` 分支因此不可达）。
-- 批量成员：``GroupMembersRequest{student_ids[],group_ids[],action:"add"|"remove"}`` →
-  ``GroupMembershipOut{success_count}``，success_count 是**实际写入/删除的「学生×组」条数**
-  （幂等重复 add 为 0）。admin 侧先 ``validate_student_ids``（422 INVALID_STUDENT_IDS /
-  EMPTY_SELECTION）再 ``apply_membership``（404 GROUP_NOT_FOUND / 422），任一不合法整批拒绝。
-- 教师批量成员：先校验 student_ids ⊆ 绑定学生，否则 403 STUDENT_NOT_BOUND（整批取消）。
-- 批量重置密码 ``BatchResetPasswordRequest{student_ids[],new_password(≥6)}`` → ``SuccessOut{success}``；
-  批量启停 ``BatchActiveRequest{student_ids[],is_active}`` → ``SuccessOut{success}``。
-- 学生列表 groups 字段：admin ``StudentOut{...,teachers[],groups[]}``、教师
-  ``BoundStudentOut{id,username,display_name,is_active,groups[]}``，``GroupRef{id,name}``。
+- PW-02：``get_current_user`` 内置未改密拦截——除 ``/api/auth/{login,me,password}`` 与
+  ``/api/settings*`` 白名单外一律 403 MUST_CHANGE_PASSWORD。``users.must_change_password``
+  列默认 1，所以本文件里所有直接写库的账号工厂都必须显式传 0，否则整个文件的请求都被挡死。
+- 三层归属（BD-01~06）：层 1 ``groups/group_members`` 与层 2 ``teacher_groups`` 的唯一写者是
+  admin；层 3 ``teacher_students`` 的唯一写者是教师本人，三条路径：
+  ``bind_from_class``（任一学生不在我可教的组 → 整批 403 STUDENT_NOT_IN_CLASS 且库零变化，
+  幂等）、``bind``（兜底按学号，只接受 role=student 且 is_active=1，否则整批 422
+  INVALID_STUDENT_IDS；响应不回学生明细）、``unbind``（只移自己的名单，不在名单里的静默忽略）。
+  三者都返回 ``GroupMembershipOut{success_count}``，值是**实际新增/删除的条数**。
+- 已废弃端点：``POST /api/teacher/students/group_members``、``GET /api/teacher/groups``、
+  ``PUT /api/admin/teachers/{id}/students`` → 404/405；同路径 GET 保留为只读。
+- 密码能力只存在于 admin 端：单个重置**无请求体** → ``TempCredentialOut{student_id,username,
+  display_name,temp_password,expires_at}``；批量重置 ``{student_ids,mode:"unified"|"random"}``
+  → ``{mode,count,credentials[]}``。unified 整批只算一次 bcrypt、``password_updated_at`` 为
+  NULL（不过期）、密码全为 ``12345678``；random 逐生独立密码、``expires_at`` = 生成时刻 +7 天，
+  人数 > ``config.BATCH_RESET_ASK_THRESHOLD`` 时改走 ``hash_password_many`` 线程池。
+- 审计（AU-02~05）：``group_member_change`` / ``group_update`` / ``group_delete`` /
+  ``user_is_active_change``（批量时逐人一条）/ ``teacher_group_assign`` /
+  ``teacher_student_bind`` / ``teacher_student_unbind`` / ``student_batch_reset_pw``。
+  ``log_audit`` 只 add 不 commit，接口自己 commit，故断言前直接查库（先 fresh()）。
+- 列表筛选：``GET /admin/students?q=&group_id=&must_change=``、``GET /admin/teachers?q=``、
+  ``GET /teacher/students?q=``；``StudentOut/BoundStudentOut/TeacherOut`` 均带
+  ``must_change_password``。
 - 草稿：``PUT /api/teacher/problems/{id}/draft`` body=ProblemDraft →
   ``ProblemDraftSavedOut{ok,draft_saved_at}``；``GET /api/teacher/problems/{id}`` 带
   ``draft`` + ``draft_saved_at``；``DELETE`` 同路径返回 ``{"ok": true}``；
@@ -26,6 +37,7 @@ app/schemas.py、app/main.py），要点：
   ``_get_owned_problem``：题目不存在 404 PROBLEM_NOT_FOUND，非本人题目 403 FORBIDDEN。
 """
 from datetime import datetime
+import json
 
 import pytest
 from fastapi.testclient import TestClient
@@ -33,13 +45,17 @@ from sqlalchemy import text
 
 from app.api import admin as admin_api
 from app.api import teacher as teacher_api
-from app.core.security import create_token, hash_password
+from app.core import config
+from app.core.security import (create_token, hash_password, temp_password_expires_at,
+                               verify_password)
 from app.main import app
-from app.models import Group, GroupMember, Problem, TeacherStudent, User
+from app.models import (AuditLog, Group, GroupMember, Problem, TeacherGroup,
+                        TeacherStudent, User)
 
 # 已知密码：种子数据共用一次 bcrypt（cost=12 约 250ms），避免每个学生都算一次
 STUDENT_PWD = "pw123456"
 NEW_PWD = "brand-new-9"
+INITIAL = config.DEFAULT_INITIAL_PASSWORD
 
 _SHARED_HASH: str | None = None
 
@@ -60,8 +76,12 @@ def _add(db, obj):
     return obj
 
 
-def seed_students(db, n, *, prefix="stu", bind_to=(), password_hash=None):
-    """建 n 个学生；bind_to 传入的教师会与学生建立 teacher_students 绑定。"""
+def seed_students(db, n, *, prefix="stu", bind_to=(), password_hash=None, must_change=0):
+    """建 n 个学生；bind_to 传入的教师会与学生建立 teacher_students 绑定。
+
+    must_change 默认 0：PW-02 的未改密拦截会把「直接写库」的账号也一起挡在业务接口外，
+    只有专门验证拦截的用例才需要传 1。
+    """
     users = []
     for i in range(1, n + 1):
         users.append(User(
@@ -69,6 +89,7 @@ def seed_students(db, n, *, prefix="stu", bind_to=(), password_hash=None):
             password_hash=password_hash or shared_hash(),
             role="student",
             display_name=f"学生{prefix}{i}",
+            must_change_password=must_change,
         ))
     db.add_all(users)
     db.flush()
@@ -87,6 +108,11 @@ def seed_group(db, name):
 
 def seed_group_member(db, group, student):
     return _add(db, GroupMember(group_id=group.id, student_id=student.id))
+
+
+def seed_teacher_group(db, teacher, group):
+    """层 2「谁可教哪个班」——admin 是唯一写者，测试里直接写库当既有分配。"""
+    return _add(db, TeacherGroup(teacher_id=teacher.id, group_id=group.id))
 
 
 # ---------- 读库断言辅助 ----------
@@ -108,6 +134,18 @@ def member_pairs(db):
     fresh(db)
     rows = db.execute(text("SELECT group_id, student_id FROM group_members")).all()
     return {(g, s) for g, s in rows}
+
+
+def roster_pairs(db):
+    """teacher_students 全表快照（层 3），同上用于「零变化」硬断言。"""
+    fresh(db)
+    rows = db.execute(text("SELECT teacher_id, student_id FROM teacher_students")).all()
+    return {(t, s) for t, s in rows}
+
+
+def audit_rows(db, action):
+    fresh(db)
+    return db.query(AuditLog).filter(AuditLog.action == action).order_by(AuditLog.id).all()
 
 
 def group_names_of(item):
@@ -136,12 +174,15 @@ def client(db):
 
 @pytest.fixture()
 def admin_user(db):
-    return _add(db, User(username="admin001", password_hash="x", role="admin", display_name="管理员"))
+    # must_change_password=0：否则 PW-02 拦截会把 admin 的所有请求挡成 403
+    return _add(db, User(username="admin001", password_hash="x", role="admin",
+                         display_name="管理员", must_change_password=0))
 
 
 @pytest.fixture()
 def teacher2(db):
-    return _add(db, User(username="t002", password_hash="x", role="teacher", display_name="李老师"))
+    return _add(db, User(username="t002", password_hash="x", role="teacher",
+                         display_name="李老师", must_change_password=0))
 
 
 @pytest.fixture()
@@ -174,6 +215,12 @@ TEACHER_PASSWORD_PATHS = [
     ("get", "/api/teacher/students/reset_password"),
     ("put", "/api/teacher/students/batch_reset_password"),
     ("delete", "/api/teacher/students/reset_password"),
+    # 0.3.0 之后 admin 端也没多出来的入口：教师侧连「改自己密码」的路由都不存在，
+    # 改密码只有 /api/auth/password 一条（全角色共用）
+    ("post", "/api/teacher/password/change"),
+    ("post", "/api/teacher/me/password"),
+    ("post", "/api/teacher/students/1/password"),
+    ("put", "/api/teacher/students/1/reset_password"),
 ]
 
 
@@ -220,127 +267,289 @@ class TestPasswordRedLine:
     def test_admin_can_batch_reset(self, client, db, h_admin):
         s = seed_students(db, 1, prefix="adm")[0]
         resp = client.post("/api/admin/students/batch_reset_password", headers=h_admin,
-                           json={"student_ids": [s.id], "new_password": NEW_PWD})
+                           json={"student_ids": [s.id], "mode": "unified"})
         assert resp.status_code == 200, resp.text
-        assert resp.json() == {"success": True}
-        assert login(client, s.username, NEW_PWD).status_code == 200
+        body = resp.json()
+        # 批量重置的响应是凭证明细，而不是旧的 {success: true}
+        assert set(body) == {"mode", "count", "credentials"}
+        assert body["credentials"][0]["temp_password"] == INITIAL
+        ok = login(client, s.username, INITIAL)
+        assert ok.status_code == 200, ok.text
+        assert ok.json()["user"]["must_change_password"] is True
 
 
 # ---------- 2/3. 教师端批量成员关系 ----------
 
 class TestTeacherMembership:
-    def test_unbound_students_rejected_403_and_no_rows_written(self, client, db, teacher, teacher2,
-                                                               h_teacher, h_admin):
-        mine, theirs = seed_students(db, 1, prefix="mine", bind_to=[teacher])[0], \
-            seed_students(db, 1, prefix="theirs", bind_to=[teacher2])[0]
+    """三层归属（BD-01~05）：教师不再改组，只能在「自己可教的组」里把人拉进自己名单。
+
+    旧版这里 4 例走的是 ``POST /api/teacher/students/group_members``（教师改组），该接口已随
+    GR-02 删除；改为覆盖 ``GET /teacher/classes`` + ``POST /teacher/students/bind_from_class``。
+    """
+
+    def test_classes_only_exposes_teachable_groups(self, client, db, teacher, teacher2, h_teacher):
+        mine_group = seed_group(db, "我可教的班")
+        other_group = seed_group(db, "别人的班")
+        seed_teacher_group(db, teacher, mine_group)
+        seed_teacher_group(db, teacher2, other_group)
+        in_class = seed_students(db, 2, prefix="cls")
+        outsider = seed_students(db, 1, prefix="out")[0]
+        for s in in_class:
+            seed_group_member(db, mine_group, s)
+        seed_group_member(db, other_group, outsider)
+
+        resp = client.get("/api/teacher/classes", headers=h_teacher)
+        assert resp.status_code == 200, resp.text
+        classes = resp.json()
+        # 只返回经 teacher_groups 分给我的组，别人班连组名都看不到
+        assert [c["name"] for c in classes] == ["我可教的班"]
+        assert classes[0]["id"] == mine_group.id
+        assert classes[0]["member_count"] == 2
+        assert {s["username"] for s in classes[0]["students"]} == {"cls1", "cls2"}
+        assert all(s["bound"] is False for s in classes[0]["students"])
+        assert set(classes[0]["students"][0]) == {
+            "id", "username", "display_name", "is_active", "bound"}
+
+        # 停用学生照常返回，由 is_active 标注（BD-03），不会被从名单里抹掉
+        in_class[0].is_active = 0
+        db.commit()
+        rows = client.get("/api/teacher/classes", headers=h_teacher).json()[0]["students"]
+        assert {r["id"] for r in rows} == {in_class[0].id, in_class[1].id}
+        assert next(r for r in rows if r["id"] == in_class[0].id)["is_active"] == 0
+
+    def test_bind_from_class_adds_then_is_idempotent(self, client, db, teacher, h_teacher):
         group = seed_group(db, "实验班")
-        before = member_pairs(db)
+        seed_teacher_group(db, teacher, group)
+        s1, s2 = seed_students(db, 2, prefix="b")
+        seed_group_member(db, group, s1)
+        seed_group_member(db, group, s2)
+        url = "/api/teacher/students/bind_from_class"
+
+        resp = client.post(url, headers=h_teacher, json={"student_ids": [s1.id, s2.id]})
+        assert resp.status_code == 200, resp.text
+        # success_count 是「实际新增条数」
+        assert resp.json() == {"success_count": 2}
+        assert roster_pairs(db) == {(teacher.id, s1.id), (teacher.id, s2.id)}
+
+        again = client.post(url, headers=h_teacher, json={"student_ids": [s1.id, s2.id]})
+        assert again.status_code == 200, again.text
+        assert again.json() == {"success_count": 0}
+        assert roster_pairs(db) == {(teacher.id, s1.id), (teacher.id, s2.id)}
+        # 请求体自身重复的 ID 只算一份（去重后写）
+        dup = client.post(url, headers=h_teacher, json={"student_ids": [s1.id, s1.id]})
+        assert dup.json() == {"success_count": 0}
+
+        # 拉入后两份视图都反映出来
+        rows = {r["id"]: r for r in client.get("/api/teacher/students", headers=h_teacher).json()}
+        assert set(rows) == {s1.id, s2.id}
+        assert group_names_of(rows[s1.id]) == {"实验班"}
+        classes = client.get("/api/teacher/classes", headers=h_teacher).json()
+        assert [s["bound"] for s in classes[0]["students"]] == [True, True]
+
+        # AU-04：每次成功调用一条 bind 审计，detail 带实际新增 ID 与来源
+        fresh(db)
+        logs = audit_rows(db, "teacher_student_bind")
+        assert len(logs) == 3
+        assert logs[0].actor_id == teacher.id and logs[0].target_id == teacher.id
+        assert json.loads(logs[0].detail) == {
+            "count": 2, "student_ids": [s1.id, s2.id], "source": "class"}
+        assert all(json.loads(r.detail)["count"] == 0 for r in logs[1:])
+
+    def test_students_outside_teachable_group_reject_whole_batch(self, client, db, teacher, teacher2,
+                                                                  h_teacher, h_admin, admin_user):
+        mine_group = seed_group(db, "我的班")
+        other_group = seed_group(db, "别人的班")
+        seed_teacher_group(db, teacher, mine_group)
+        seed_teacher_group(db, teacher2, other_group)
+        mine = seed_students(db, 1, prefix="mine")[0]
+        theirs = seed_students(db, 1, prefix="theirs")[0]
+        seed_group_member(db, mine_group, mine)
+        seed_group_member(db, other_group, theirs)
+        before = roster_pairs(db)
         assert before == set()
 
-        resp = client.post("/api/teacher/students/group_members", headers=h_teacher, json={
-            "student_ids": [mine.id, theirs.id], "group_ids": [group.id], "action": "add",
-        })
+        resp = client.post("/api/teacher/students/bind_from_class", headers=h_teacher,
+                           json={"student_ids": [mine.id, theirs.id]})
         assert resp.status_code == 403, resp.text
-        assert code_of(resp) == "STUDENT_NOT_BOUND"
-        # 关键：不能只看状态码，必须确认库里一行都没写进去（含被合法绑定的那个学生）
-        assert member_pairs(db) == before
-        assert scalar(db, "SELECT COUNT(*) FROM group_members") == 0
-        rows = {r["id"]: r for r in client.get("/api/teacher/students", headers=h_teacher).json()}
-        assert group_names_of(rows[mine.id]) == set()
-        # admin 侧列表同样看不到幽灵成员
-        admin_rows = {r["id"]: r for r in client.get("/api/admin/students", headers=h_admin).json()}
-        assert admin_rows[theirs.id]["groups"] == []
+        assert code_of(resp) == "STUDENT_NOT_IN_CLASS"
+        # 关键：不能只看状态码，必须确认库里一行都没写进去（含那个合法的学生）
+        assert roster_pairs(db) == before
+        assert scalar(db, "SELECT COUNT(*) FROM teacher_students") == 0
+        assert audit_rows(db, "teacher_student_bind") == []
+        # 教师侧列表同样没有幽灵成员
+        assert client.get("/api/teacher/students", headers=h_teacher).json() == []
 
-    def test_mixed_batch_is_all_or_nothing_even_for_remove(self, client, db, teacher, teacher2,
-                                                           h_teacher):
+        # 层 1 仍由 admin 独写：改组成员成功并写审计
+        added = client.post("/api/admin/students/group_members", headers=h_admin, json={
+            "student_ids": [mine.id, theirs.id], "group_ids": [mine_group.id], "action": "add",
+        })
+        assert added.status_code == 200, added.text
+        # mine 已在组内（幂等 add 只补 theirs）→ 实际写入 1 条
+        assert added.json() == {"success_count": 1}
+        assert member_pairs(db) == {(mine_group.id, mine.id), (mine_group.id, theirs.id),
+                                    (other_group.id, theirs.id)}
+        fresh(db)
+        logs = audit_rows(db, "group_member_change")
+        assert len(logs) == 1
+        assert logs[0].actor_id == admin_user.id
+        assert logs[0].target_id == mine_group.id   # 单组时 target_id 就是那个组
+        assert json.loads(logs[0].detail) == {
+            "action": "add", "group_ids": [mine_group.id],
+            "student_ids": sorted([mine.id, theirs.id]), "changed": 1}
+        # admin 学生列表反映写入结果
+        admin_rows = {r["id"]: r for r in client.get("/api/admin/students", headers=h_admin).json()}
+        assert group_names_of(admin_rows[theirs.id]) == {"我的班", "别人的班"}
+        # 层 1 变化会立刻改变教师可见范围：theirs 现在也在我可教的班里的名单中
+        classes = client.get("/api/teacher/classes", headers=h_teacher).json()
+        assert {s["username"] for s in classes[0]["students"]} == {"mine1", "theirs1"}
+        # 于是同一个批次现在可以整批成功了
+        ok = client.post("/api/teacher/students/bind_from_class", headers=h_teacher,
+                         json={"student_ids": [mine.id, theirs.id]})
+        assert ok.status_code == 200, ok.text
+        assert ok.json() == {"success_count": 2}
+        assert roster_pairs(db) == {(teacher.id, mine.id), (teacher.id, theirs.id)}
+
+    def test_unbind_only_touches_own_roster_and_ignores_the_rest(self, client, db, teacher, teacher2,
+                                                                h_teacher):
         mine = seed_students(db, 1, prefix="mine", bind_to=[teacher])[0]
         foreign = seed_students(db, 1, prefix="foreign", bind_to=[teacher2])[0]
         group = seed_group(db, "A班")
+        seed_teacher_group(db, teacher, group)
         seed_group_member(db, group, mine)
-        assert member_pairs(db) == {(group.id, mine.id)}
+        assert roster_pairs(db) == {(teacher.id, mine.id), (teacher2.id, foreign.id)}
 
-        resp = client.post("/api/teacher/students/group_members", headers=h_teacher, json={
-            "student_ids": [mine.id, foreign.id], "group_ids": [group.id], "action": "remove",
-        })
-        assert resp.status_code == 403
-        assert code_of(resp) == "STUDENT_NOT_BOUND"
-        # 已存在的成员关系也没被顺手删掉
+        # BD-05：只能移自己的名单，别人的那条静默忽略（不是整批拒绝，也不是报错）
+        resp = client.post("/api/teacher/students/unbind", headers=h_teacher,
+                           json={"student_ids": [mine.id, foreign.id]})
+        assert resp.status_code == 200, resp.text
+        assert resp.json() == {"success_count": 1}
+        # 教师 2 的名单毫发无损
+        assert roster_pairs(db) == {(teacher2.id, foreign.id)}
+        # 组定义（层 1）不因移除名单而受影响
         assert member_pairs(db) == {(group.id, mine.id)}
+        # 重复移除幂等：0 条、不报错
+        again = client.post("/api/teacher/students/unbind", headers=h_teacher,
+                           json={"student_ids": [mine.id]})
+        assert again.status_code == 200, again.text
+        assert again.json() == {"success_count": 0}
+        assert client.get("/api/teacher/students", headers=h_teacher).json() == []
+
+        fresh(db)
+        logs = audit_rows(db, "teacher_student_unbind")
+        assert len(logs) == 2
+        assert [json.loads(r.detail)["student_ids"] for r in logs] == [[mine.id], []]
+        assert logs[0].actor_id == teacher.id and logs[0].target_id == teacher.id
 
     def test_empty_selection_is_422(self, client, db, teacher, h_teacher):
         mine = seed_students(db, 1, prefix="mine", bind_to=[teacher])[0]
         group = seed_group(db, "A班")
-        for body in (
-            {"student_ids": [], "group_ids": [group.id], "action": "add"},
-            {"student_ids": [mine.id], "group_ids": [], "action": "add"},
-        ):
-            resp = client.post("/api/teacher/students/group_members", headers=h_teacher, json=body)
-            assert resp.status_code == 422, body
+        seed_teacher_group(db, teacher, group)
+        seed_group_member(db, group, mine)
+        before = roster_pairs(db)
+
+        for path in ("/api/teacher/students/bind_from_class", "/api/teacher/students/bind",
+                     "/api/teacher/students/unbind"):
+            resp = client.post(path, headers=h_teacher, json={"student_ids": []})
+            assert resp.status_code == 422, (path, resp.text)
             assert code_of(resp) == "EMPTY_SELECTION"
-        assert member_pairs(db) == set()
+        # 空选择在写库之前就拦下：名单零变化，也不留审计
+        assert roster_pairs(db) == before
+        assert audit_rows(db, "teacher_student_bind") == []
+        assert audit_rows(db, "teacher_student_unbind") == []
 
-    def test_add_and_remove_for_bound_students_reflects_in_both_lists(self, client, db, teacher,
-                                                                      h_teacher, h_admin):
-        g1, g2 = seed_group(db, "一班"), seed_group(db, "二班")
-        s1, s2 = seed_students(db, 2, prefix="b", bind_to=[teacher])
-        ids = [s1.id, s2.id]
+    def test_admin_teacher_roster_view_is_read_only(self, client, db, teacher, h_teacher, h_admin):
+        group = seed_group(db, "名单班")
+        seed_teacher_group(db, teacher, group)
+        s1, s2 = seed_students(db, 2, prefix="r")
+        for s in (s1, s2):
+            seed_group_member(db, group, s)
+        bound = client.post("/api/teacher/students/bind_from_class", headers=h_teacher,
+                            json={"student_ids": [s1.id, s2.id]})
+        assert bound.json() == {"success_count": 2}, bound.text
 
-        resp = client.post("/api/teacher/students/group_members", headers=h_teacher, json={
-            "student_ids": ids, "group_ids": [g1.id, g2.id], "action": "add",
-        })
+        # BD-06：admin 保留教师名单的只读视图（唯一写者是教师本人）
+        url = f"/api/admin/teachers/{teacher.id}/students"
+        resp = client.get(url, headers=h_admin)
         assert resp.status_code == 200, resp.text
-        # 2 学生 × 2 组 = 4 条成员关系
-        assert resp.json() == {"success_count": 4}
-        assert member_pairs(db) == {(g.id, s.id) for g in (g1, g2) for s in (s1, s2)}
-
-        teacher_rows = {r["id"]: r for r in client.get("/api/teacher/students", headers=h_teacher).json()}
-        admin_rows = {r["id"]: r for r in client.get("/api/admin/students", headers=h_admin).json()}
-        for sid in ids:
-            assert group_names_of(teacher_rows[sid]) == {"一班", "二班"}
-            assert group_names_of(admin_rows[sid]) == {"一班", "二班"}
-        counts = {g["name"]: g["member_count"] for g in
-                  client.get("/api/teacher/groups", headers=h_teacher).json()}
-        assert counts == {"一班": 2, "二班": 2}
-        admin_counts = {g["name"]: g["member_count"] for g in
-                        client.get("/api/admin/groups", headers=h_admin).json()}
-        assert admin_counts == counts
-
-        # 移出其中一个组
-        resp = client.post("/api/teacher/students/group_members", headers=h_teacher, json={
-            "student_ids": ids, "group_ids": [g2.id], "action": "remove",
-        })
-        assert resp.status_code == 200, resp.text
-        assert resp.json() == {"success_count": 2}
-        assert member_pairs(db) == {(g1.id, s1.id), (g1.id, s2.id)}
-        teacher_rows = {r["id"]: r for r in client.get("/api/teacher/students", headers=h_teacher).json()}
-        admin_rows = {r["id"]: r for r in client.get("/api/admin/students", headers=h_admin).json()}
-        for sid in ids:
-            assert group_names_of(teacher_rows[sid]) == {"一班"}
-            assert group_names_of(admin_rows[sid]) == {"一班"}
-            assert {g["id"] for g in admin_rows[sid]["groups"]} == {g1.id}
-        counts = {g["name"]: g["member_count"] for g in
-                  client.get("/api/admin/groups", headers=h_admin).json()}
-        assert counts == {"一班": 2, "二班": 0}
+        assert resp.json() == {"student_ids": sorted([s1.id, s2.id])}
+        # 写接口已删除：同路径只剩 405/404，且不会动到库
+        for method in ("put", "delete"):
+            gone = client.request(method.upper(), url, headers=h_admin,
+                                  json={"student_ids": [s1.id]})
+            assert gone.status_code in (404, 405), (method, gone.status_code, gone.text)
+        assert roster_pairs(db) == {(teacher.id, s1.id), (teacher.id, s2.id)}
+        # 未知教师 → 404（读接口还在，角色校验也生效）
+        missing = client.get("/api/admin/teachers/99999/students", headers=h_admin)
+        assert missing.status_code == 404
+        assert code_of(missing) == "NOT_FOUND"
+        # admin 学生列表能看到层 3 的归属，教师列表带 student_count
+        rows = {r["id"]: r for r in client.get("/api/admin/students", headers=h_admin).json()}
+        assert [t["username"] for t in rows[s1.id]["teachers"]] == ["t001"]
+        counts = {t["username"]: t["student_count"] for t in
+                  client.get("/api/admin/teachers", headers=h_admin).json()}
+        assert counts["t001"] == 2
+        # LI-02：未改密徽标（这些种子账号已显式置 0）
+        t_rows = client.get("/api/teacher/students", headers=h_teacher).json()
+        assert [r["must_change_password"] for r in t_rows] == [False, False]
 
     def test_group_definitions_are_readonly_for_teacher(self, client, db, teacher, h_teacher, h_admin):
         group = seed_group(db, "只读班")
-        resp = client.get("/api/teacher/groups", headers=h_teacher)
-        assert resp.status_code == 200
-        assert resp.json() == [{
-            "id": group.id, "name": "只读班", "created_at": group.created_at, "member_count": 0,
+        # GR-02：教师端唯一的组入口是 /classes，没分配给它的组连组名都看不到
+        assert client.get("/api/teacher/classes", headers=h_teacher).json() == []
+        seed_teacher_group(db, teacher, group)
+        assert client.get("/api/teacher/classes", headers=h_teacher).json() == [{
+            "id": group.id, "name": "只读班", "member_count": 0, "students": [],
         }]
         # 组本身的增删改仅 admin
         for method, path, body in (
             ("post", "/api/admin/groups", {"name": "教师建班"}),
             ("patch", f"/api/admin/groups/{group.id}", {"name": "教师改名"}),
             ("delete", f"/api/admin/groups/{group.id}", None),
+            ("put", f"/api/admin/teachers/{teacher.id}/groups", {"group_ids": [group.id]}),
         ):
             resp = client.request(method.upper(), path, headers=h_teacher,
                                   json=body)
             assert resp.status_code == 403, (method, path, resp.text)
             assert code_of(resp) == "FORBIDDEN"
         assert scalar(db, "SELECT COUNT(*) FROM groups") == 1
+        assert scalar(db, "SELECT COUNT(*) FROM teacher_groups") == 1
         assert client.get("/api/admin/groups", headers=h_admin).json()[0]["name"] == "只读班"
+
+
+# ---------- 3b. 已废弃端点：路由压根没注册（QA-13） ----------
+
+# (method, path)：教师侧改组与组列表、admin 侧代教师改名单
+DEPRECATED_PATHS = [
+    ("post", "/api/teacher/students/group_members"),
+    ("get", "/api/teacher/groups"),
+    ("put", "/api/teacher/students/group_members"),
+    ("delete", "/api/teacher/groups"),
+    ("get", "/api/teacher/classes/1"),
+]
+
+
+class TestDeprecatedEndpoints:
+    @pytest.mark.parametrize("method,path", DEPRECATED_PATHS)
+    def test_route_is_gone_for_teacher_token(self, client, h_teacher, method, path):
+        resp = client.request(method.upper(), path, headers=h_teacher,
+                              json={"student_ids": [1], "group_ids": [1], "action": "add"})
+        assert resp.status_code in (404, 405), (method, path, resp.status_code, resp.text)
+
+    @pytest.mark.parametrize("method,path", DEPRECATED_PATHS)
+    def test_route_is_gone_for_admin_token(self, client, h_admin, method, path):
+        # 404/405 由路由匹配决定，与角色无关：不能退化成「存在但 403」
+        resp = client.request(method.upper(), path, headers=h_admin,
+                              json={"student_ids": [1], "group_ids": [1], "action": "add"})
+        assert resp.status_code in (404, 405), (method, path, resp.status_code, resp.text)
+
+    def test_deprecated_paths_are_not_registered_at_all(self):
+        paths = app.openapi()["paths"]
+        for _method, path in DEPRECATED_PATHS:
+            assert path not in paths, path
+        # 教师端组相关的只读入口只有 /classes 一个
+        teacher_group_paths = {p for p in paths if p.startswith("/api/teacher")
+                               and ("group" in p or p.endswith("/classes"))}
+        assert teacher_group_paths == {"/api/teacher/classes"}
 
 
 # ---------- 4. admin 分组 CRUD ----------
@@ -394,6 +603,11 @@ class TestAdminGroupsCrud:
         assert scalar(db, "SELECT name FROM groups WHERE id=:i", i=g_a.id) == "甲班改"
         # 重命名不影响成员关系
         assert member_pairs(db) == {(g_a.id, student.id)}
+        # AU-02：组改名写审计 group_update，detail 带新旧名
+        logs = audit_rows(db, "group_update")
+        assert len(logs) == 1
+        assert logs[0].target_type == "group" and logs[0].target_id == g_a.id
+        assert json.loads(logs[0].detail) == {"old_name": "甲班", "new_name": "甲班改"}
 
         missing = client.patch("/api/admin/groups/99999", headers=h_admin, json={"name": "幽灵班"})
         assert missing.status_code == 404
@@ -402,18 +616,20 @@ class TestAdminGroupsCrud:
         clash = client.patch(f"/api/admin/groups/{g_a.id}", headers=h_admin, json={"name": "乙班"})
         assert clash.status_code == 409
         assert code_of(clash) == "GROUP_NAME_EXISTS"
-        # 409 后原名保持不变
+        # 409 后原名保持不变，也不会多出一条审计
         assert scalar(db, "SELECT name FROM groups WHERE id=:i", i=g_a.id) == "甲班改"
         assert scalar(db, "SELECT name FROM groups WHERE id=:i", i=g_b.id) == "乙班"
         assert scalar(db, "SELECT COUNT(*) FROM groups") == 2
+        assert len(audit_rows(db, "group_update")) == 1
 
-    def test_delete_group_removes_memberships_only_for_that_group(self, client, db, h_admin):
+    def test_delete_group_removes_memberships_only_for_that_group(self, client, db, h_admin, teacher):
         doomed, keeper = seed_group(db, "解散班"), seed_group(db, "留下班")
         doomed_id, keeper_id = doomed.id, keeper.id
         s1, s2 = seed_students(db, 2, prefix="d")
         seed_group_member(db, doomed, s1)
         seed_group_member(db, doomed, s2)
         seed_group_member(db, keeper, s1)
+        seed_teacher_group(db, teacher, doomed)
         assert member_pairs(db) == {(doomed_id, s1.id), (doomed_id, s2.id), (keeper_id, s1.id)}
 
         resp = client.delete(f"/api/admin/groups/{doomed_id}", headers=h_admin)
@@ -423,12 +639,23 @@ class TestAdminGroupsCrud:
         assert member_pairs(db) == {(keeper_id, s1.id)}
         assert scalar(db, "SELECT COUNT(*) FROM group_members WHERE group_id=:g", g=doomed_id) == 0
         assert scalar(db, "SELECT COUNT(*) FROM groups WHERE id=:g", g=doomed_id) == 0
+        # 层 2 分配随组一起级联清掉，不留悬空行
+        assert scalar(db, "SELECT COUNT(*) FROM teacher_groups WHERE group_id=:g", g=doomed_id) == 0
+        # AU-02：删组写审计（日志留着，即便目标已不存在）
+        logs = audit_rows(db, "group_delete")
+        assert len(logs) == 1
+        assert logs[0].target_id == doomed_id
+        assert json.loads(logs[0].detail) == {"name": "解散班"}
         assert code_of(client.delete("/api/admin/groups/99999", headers=h_admin)) == "GROUP_NOT_FOUND"
+        # 404 的失败尝试不再写审计
+        assert len(audit_rows(db, "group_delete")) == 1
 
         rows = {r["id"]: r for r in client.get("/api/admin/students", headers=h_admin).json()}
         assert group_names_of(rows[s1.id]) == {"留下班"}
         assert group_names_of(rows[s2.id]) == set()
         assert [g["name"] for g in client.get("/api/admin/groups", headers=h_admin).json()] == ["留下班"]
+        # 教师侧再也看不到解散的班
+        assert client.get("/api/teacher/classes", headers=bearer(teacher)).json() == []
 
 
 # ---------- 5/6. admin 批量成员：幂等与整批拒绝 ----------
@@ -525,6 +752,12 @@ class TestAdminBatchMembership:
             assert group_names_of(rows[sid]) == {"1组", "2组", "3组"}
             # 列表里 groups 按组名排序（groups_map_for_students 的 ORDER BY Group.name）
             assert [g["name"] for g in rows[sid]["groups"]] == ["1组", "2组", "3组"]
+        # 跨多组时 target_id 为 None（以 detail 为准），单组时才有 target_id
+        fresh(db)
+        logs = audit_rows(db, "group_member_change")
+        assert len(logs) == 1 and logs[0].target_id is None
+        assert json.loads(logs[0].detail)["group_ids"] == [g1.id, g2.id, g3.id]
+        assert json.loads(logs[0].detail)["changed"] == 6
         # 移走两个组
         resp = client.post("/api/admin/students/group_members", headers=h_admin, json={
             "student_ids": [s1.id], "group_ids": [g1.id, g2.id], "action": "remove",
@@ -535,14 +768,22 @@ class TestAdminBatchMembership:
         assert group_names_of(rows[s2.id]) == {"1组", "2组", "3组"}
 
 
-# ---------- 7. 批量重置密码：一次 bcrypt ----------
+# ---------- 7. 批量重置密码：unified / random 两模式（PW-06/09） ----------
+
+BATCH_RESET_URL = "/api/admin/students/batch_reset_password"
+
 
 class TestBatchResetPassword:
-    def test_hashes_once_for_whole_batch_and_all_can_login(self, client, db, h_admin, monkeypatch):
+    """PW-06：unified = 整批一次 bcrypt 回到 12345678（不过期）；random = 逐生独立随机密码。
+
+    性能护栏：bcrypt cost=12 约 250ms/次，所以批量用例要么人数很小、要么把哈希换成替身；
+    unified 那条保留真实 hash_password 的**计数**断言（spy 转调真实实现），人数只有 5 个。
+    """
+
+    def test_unified_hashes_once_and_never_expires(self, client, db, h_admin, admin_user, monkeypatch):
         batch = seed_students(db, 5, prefix="p")
         outsider = seed_students(db, 1, prefix="out")[0]
         outsider_hash = outsider.password_hash
-        batch_hashes = {s.id: s.password_hash for s in batch}
 
         calls = []
         real_hash = admin_api.hash_password
@@ -553,67 +794,172 @@ class TestBatchResetPassword:
 
         monkeypatch.setattr(admin_api, "hash_password", spy)
 
-        resp = client.post("/api/admin/students/batch_reset_password", headers=h_admin,
-                           json={"student_ids": [s.id for s in batch], "new_password": NEW_PWD})
+        resp = client.post(BATCH_RESET_URL, headers=h_admin,
+                           json={"student_ids": [s.id for s in batch], "mode": "unified"})
         assert resp.status_code == 200, resp.text
-        assert resp.json() == {"success": True}
-        # 核心断言：5 个学生只算一次 bcrypt
-        assert len(calls) == 1, calls
-        assert calls == [NEW_PWD]
+        body = resp.json()
+        assert set(body) == {"mode", "count", "credentials"}
+        assert body["mode"] == "unified" and body["count"] == 5
+        # 核心断言（QA-17）：整批 5 个人只算一次 bcrypt
+        assert calls == [INITIAL], calls
+
+        creds = body["credentials"]
+        assert [c["temp_password"] for c in creds] == [INITIAL] * 5
+        assert [c["expires_at"] for c in creds] == [None] * 5     # PW-05：统一密码不过期
+        assert [c["student_id"] for c in creds] == [s.id for s in batch]
+        assert [c["username"] for c in creds] == [s.username for s in batch]
+        assert [c["display_name"] for c in creds] == [s.display_name for s in batch]
 
         fresh(db)
-        stored = {s.id: db.get(User, s.id).password_hash for s in batch}
-        # 同一个 hash 复用到 N 行
-        assert len(set(stored.values())) == 1
-        assert all(h != batch_hashes[sid] for sid, h in stored.items())
-        # 未参与本批的学生密码不变
+        stored = [db.get(User, s.id) for s in batch]
+        hashes = {u.password_hash for u in stored}
+        # 同一个 hash 复用到 N 行，且确实是 12345678 的哈希（spy 每次算的盐不同，故不比对字面值）
+        assert len(hashes) == 1
+        assert verify_password(INITIAL, next(iter(hashes)))
+        assert next(iter(hashes)) != shared_hash()
+        assert all(u.must_change_password == 1 for u in stored)
+        assert all(u.password_updated_at is None for u in stored)
+        # 未入选学生的密码原样不动
         assert db.get(User, outsider.id).password_hash == outsider_hash
 
         for student in batch:
-            ok = login(client, student.username, NEW_PWD)
+            ok = login(client, student.username, INITIAL)
             assert ok.status_code == 200, (student.username, ok.text)
-            assert ok.json()["user"]["username"] == student.username
+            assert ok.json()["user"]["must_change_password"] is True
         # 旧密码全部失效
-        for student in batch:
-            stale = login(client, student.username, STUDENT_PWD)
-            assert stale.status_code == 401
-            assert code_of(stale) == "BAD_CREDENTIALS"
+        assert login(client, batch[0].username, STUDENT_PWD).status_code == 401
 
-    def test_invalid_batch_rejected_before_any_hashing(self, client, db, h_admin, admin_user, monkeypatch):
+        logs = audit_rows(db, "student_batch_reset_pw")
+        assert len(logs) == 1
+        assert logs[0].actor_id == admin_user.id
+        assert logs[0].target_type == "student" and logs[0].target_id is None
+        assert json.loads(logs[0].detail) == {"mode": "unified", "count": 5}
+
+    def test_random_issues_distinct_one_time_passwords(self, client, db, h_admin, admin_user):
+        # 真实 bcrypt 路径，人数压到 3（每个约 250ms），细节断言靠库而不是靠登录次数
+        batch = seed_students(db, 3, prefix="rnd")
+        resp = client.post(BATCH_RESET_URL, headers=h_admin,
+                           json={"student_ids": [s.id for s in batch], "mode": "random"})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert (body["mode"], body["count"]) == ("random", 3)
+        creds = body["credentials"]
+        passwords = [c["temp_password"] for c in creds]
+        # 逐生独立、互不相同，且符合 PW-08 的 56 字符集
+        assert len(set(passwords)) == 3
+        assert all(len(p) == config.TEMP_PASSWORD_LENGTH for p in passwords)
+        assert all(set(p) <= set(config.TEMP_PASSWORD_CHARSET) for p in passwords)
+        assert INITIAL not in passwords
+
+        fresh(db)
+        users = [db.get(User, s.id) for s in batch]
+        assert all(u.must_change_password == 1 for u in users)
+        assert all(u.password_updated_at for u in users)     # PW-05 锚点已写
+        # 同一批共用一个生成时刻 → 有效期一致
+        assert len({c["expires_at"] for c in creds}) == 1
+        assert [c["expires_at"] for c in creds] == \
+            [temp_password_expires_at(u.password_updated_at) for u in users]
+        # 各人的哈希各不相同
+        assert len({u.password_hash for u in users}) == 3
+
+        # 随机密码能登录、且只对得上自己那个人（一次性凭证的归属）
+        assert login(client, batch[0].username, passwords[0]).status_code == 200
+        assert login(client, batch[1].username, passwords[0]).status_code == 401
+        logs = audit_rows(db, "student_batch_reset_pw")
+        assert [json.loads(r.detail) for r in logs] == [{"mode": "random", "count": 3}]
+
+    def test_random_over_threshold_goes_through_thread_pool(self, client, db, h_admin, monkeypatch):
+        n = config.BATCH_RESET_ASK_THRESHOLD + 1          # 21 > 20 → 并行分支
+        batch = seed_students(db, n, prefix="par")
+        seen = {}
+
+        def fake_many(passwords, workers=None):
+            seen["passwords"] = list(passwords)
+            seen["workers"] = workers
+            return [f"fake<{p}>" for p in passwords]
+
+        monkeypatch.setattr(admin_api, "hash_password_many", fake_many)
+        serial = []
+        monkeypatch.setattr(admin_api, "hash_password", lambda p: serial.append(p) or "serial")
+
+        resp = client.post(BATCH_RESET_URL, headers=h_admin,
+                           json={"student_ids": [s.id for s in batch], "mode": "random"})
+        assert resp.status_code == 200, resp.text
+        # 整批一次性交给线程池，且密码互不相同
+        assert len(seen["passwords"]) == n
+        assert len(set(seen["passwords"])) == n
+        assert serial == []                                # 没有退化成串行逐个哈希
+        assert seen["workers"] is None                     # 用 config.BCRYPT_PARALLEL_WORKERS
+        fresh(db)
+        assert {db.get(User, s.id).password_hash for s in batch} == \
+            {f"fake<{p}>" for p in seen["passwords"]}
+        assert [c["temp_password"] for c in resp.json()["credentials"]] == seen["passwords"]
+
+    def test_random_at_threshold_stays_serial(self, client, db, h_admin, monkeypatch):
+        n = config.BATCH_RESET_ASK_THRESHOLD               # 20 人：阈值是「超过」才并行
+        batch = seed_students(db, n, prefix="seq")
+        monkeypatch.setattr(admin_api, "hash_password_many",
+                            lambda ps, workers=None: pytest.fail("不该走线程池"))
+        hashed = []
+        monkeypatch.setattr(admin_api, "hash_password",
+                            lambda p: hashed.append(p) or f"fake<{p}>")
+
+        resp = client.post(BATCH_RESET_URL, headers=h_admin,
+                           json={"student_ids": [s.id for s in batch], "mode": "random"})
+        assert resp.status_code == 200, resp.text
+        assert len(hashed) == n
+        assert len(set(hashed)) == n
+        assert [c["expires_at"] for c in resp.json()["credentials"]][0] is not None
+        fresh(db)
+        assert db.get(User, batch[0].id).password_hash == f"fake<{hashed[0]}>"
+
+    def test_invalid_batch_rejected_before_any_hashing(self, client, db, h_admin, admin_user,
+                                                      monkeypatch):
         students = seed_students(db, 3, prefix="q")
         before_hashes = {s.id: s.password_hash for s in students}
         calls = []
         real_hash = admin_api.hash_password
-        monkeypatch.setattr(admin_api, "hash_password", lambda pw: calls.append(pw) or real_hash(pw))
+        monkeypatch.setattr(admin_api, "hash_password",
+                            lambda pw: calls.append(pw) or real_hash(pw))
+        monkeypatch.setattr(admin_api, "hash_password_many",
+                            lambda ps, workers=None: calls.extend(ps) or ["x"] * len(ps))
 
-        resp = client.post("/api/admin/students/batch_reset_password", headers=h_admin,
-                           json={"student_ids": [students[0].id, admin_user.id],
-                                 "new_password": NEW_PWD})
+        resp = client.post(BATCH_RESET_URL, headers=h_admin,
+                           json={"student_ids": [students[0].id, admin_user.id], "mode": "random"})
         assert resp.status_code == 422, resp.text
         assert code_of(resp) == "INVALID_STUDENT_IDS"
         assert calls == []
         fresh(db)
-        # 整批拒绝：没有任何一行的密码被动过
-        assert {db.get(User, sid).password_hash for sid in before_hashes} == set(before_hashes.values())
-        # 密码太短：schema 层 422
-        short = client.post("/api/admin/students/batch_reset_password", headers=h_admin,
-                            json={"student_ids": [students[0].id], "new_password": "123"})
-        assert short.status_code == 422
-        assert code_of(short) == "VALIDATION_ERROR"
-        assert calls == []
-        assert login(client, students[0].username, STUDENT_PWD).status_code == 200
+        # 整批拒绝：没有任何一行的密码被动过（逐行比对，不看集合）
+        for sid, old_hash in before_hashes.items():
+            assert db.get(User, sid).password_hash == old_hash
+        assert all(db.get(User, sid).must_change_password == 0 for sid in before_hashes)
 
-    def test_single_student_reset_still_works(self, client, db, h_admin):
+        # mode 由 schema 的 Literal 兜住；缺省时按 random 处理
+        bad_mode = client.post(BATCH_RESET_URL, headers=h_admin,
+                               json={"student_ids": [students[0].id], "mode": "set"})
+        assert bad_mode.status_code == 422
+        assert code_of(bad_mode) == "VALIDATION_ERROR"
+        empty = client.post(BATCH_RESET_URL, headers=h_admin, json={"student_ids": []})
+        assert empty.status_code == 422
+        assert code_of(empty) == "EMPTY_SELECTION"
+        # 校验在哈希之前：整批非法时一次 bcrypt 都不该发生
+        assert calls == []
+        assert audit_rows(db, "student_batch_reset_pw") == []
+
+    def test_single_student_reset_needs_no_body_and_is_role_scoped(self, client, db, h_admin, teacher):
         student = seed_students(db, 1, prefix="one")[0]
-        resp = client.post(f"/api/admin/students/{student.id}/reset_password", headers=h_admin,
-                           json={"new_password": NEW_PWD})
+        resp = client.post(f"/api/admin/students/{student.id}/reset_password", headers=h_admin)
         assert resp.status_code == 200, resp.text
-        assert resp.json() == {"success": True}
-        assert login(client, student.username, NEW_PWD).status_code == 200
-        missing = client.post("/api/admin/students/99999/reset_password", headers=h_admin,
-                              json={"new_password": NEW_PWD})
+        assert set(resp.json()) == {"student_id", "username", "display_name",
+                                    "temp_password", "expires_at"}
+        missing = client.post("/api/admin/students/99999/reset_password", headers=h_admin)
         assert missing.status_code == 404
         assert code_of(missing) == "NOT_FOUND"
+        # 学生端点打教师 ID → 404「学生不存在」，两条路径不互通
+        wrong_role = client.post(f"/api/admin/students/{teacher.id}/reset_password", headers=h_admin)
+        assert wrong_role.status_code == 404
+        assert code_of(wrong_role) == "NOT_FOUND"
 
 
 # ---------- 8. 批量启停 ----------
@@ -652,11 +998,20 @@ class TestBatchActive:
         trows = {r["id"]: r for r in client.get("/api/teacher/students", headers=h_teacher).json()}
         assert (trows[s1.id]["is_active"], trows[s2.id]["is_active"]) == (0, 0)
 
+        # AU-02：批量启停「逐人一条」，而不是一批一条汇总
+        assert [(r.target_type, r.target_id, json.loads(r.detail)) for r in
+                audit_rows(db, "user_is_active_change")] == [
+            ("student", s1.id, {"is_active": False}),
+            ("student", s2.id, {"is_active": False}),
+        ]
+
         back = client.post("/api/admin/students/batch_active", headers=h_admin,
                            json={"student_ids": [s1.id], "is_active": True})
         assert back.status_code == 200, back.text
         assert login(client, s1.username, STUDENT_PWD).status_code == 200
         assert login(client, s2.username, STUDENT_PWD).status_code == 403
+        assert [(r.target_id, json.loads(r.detail)) for r in
+                audit_rows(db, "user_is_active_change")][-1] == (s1.id, {"is_active": True})
 
     def test_batch_active_validation_and_permissions(self, client, db, h_admin, h_teacher, teacher,
                                                     admin_user):
