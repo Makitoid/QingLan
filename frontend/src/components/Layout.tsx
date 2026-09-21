@@ -17,11 +17,11 @@ import {
 
 } from '@fluentui/react-components';
 import { Settings24Regular, SignOut24Regular, WeatherMoon24Regular, WeatherSunny24Regular } from '@fluentui/react-icons';
-import { clearAuth, getStoredUser } from '../api/client';
+import { clearAuth } from '../api/client';
 import type { Role } from '../api/types';
 import { useSettings, useThemeMode } from '../context';
 import { BackgroundLayers, resolveBgUrl } from './BackgroundLayers';
-import { roleHome } from './Guard';
+import { CHANGE_PASSWORD_PATH, roleHome, useAuthUser } from './Guard';
 
 const NAV_LINKS: Record<Role, { to: string; label: string }[]> = {
   student: [{ to: '/student/assignments', label: '我的场次' }],
@@ -33,6 +33,7 @@ const NAV_LINKS: Record<Role, { to: string; label: string }[]> = {
   admin: [
     { to: '/admin/teachers', label: '教师管理' },
     { to: '/admin/students', label: '学生管理' },
+    { to: '/admin/audit', label: '审计日志' },
     { to: '/admin/settings', label: '主题设置' },
   ],
 };
@@ -43,7 +44,9 @@ export function Layout() {
   const location = useLocation();
   const { isDark, setMode } = useThemeMode();
   const { effective } = useSettings();
-  const user = getStoredUser();
+  const user = useAuthUser();
+  // PW-02：强制改密期间不放出任意指入口——点了也只会被守卫弹回改密页，不如直接不显示。
+  const mustChange = Boolean(user?.must_change_password);
 
   const acrylicBg = chroma(t.colorNeutralBackground1).alpha(0.72).css();
   const bgUrl = resolveBgUrl(effective, isDark);
@@ -55,7 +58,7 @@ export function Layout() {
     root.style.setProperty('--ql-selection', chroma(t.colorBrandBackground).alpha(0.28).css());
   }, [acrylicBg, t.colorBrandBackground]);
 
-  const links = user ? NAV_LINKS[user.role] : [];
+  const links = user && !mustChange ? NAV_LINKS[user.role] : [];
   const selectedTab =
     links.find((link) => location.pathname === link.to || location.pathname.startsWith(`${link.to}/`))?.to ?? '';
 
@@ -88,17 +91,19 @@ export function Layout() {
           </Text>
         </NavLink>
 
-        <TabList
-          selectedValue={selectedTab}
-          onTabSelect={(_, data) => navigate(data.value as string)}
-          style={{ marginLeft: tokens.spacingHorizontalXL }}
-        >
-          {links.map((link) => (
-            <Tab key={link.to} value={link.to}>
-              {link.label}
-            </Tab>
-          ))}
-        </TabList>
+        {links.length > 0 && (
+          <TabList
+            selectedValue={selectedTab}
+            onTabSelect={(_, data) => navigate(data.value as string)}
+            style={{ marginLeft: tokens.spacingHorizontalXL }}
+          >
+            {links.map((link) => (
+              <Tab key={link.to} value={link.to}>
+                {link.label}
+              </Tab>
+            ))}
+          </TabList>
+        )}
 
         <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS }}>
           <Button
@@ -123,8 +128,11 @@ export function Layout() {
                   <Text size={200} style={{ color: t.colorNeutralForeground3, paddingInline: tokens.spacingHorizontalSNudge }}>
                     {user.username} · {user.role === 'admin' ? '管理员' : user.role === 'teacher' ? '教师' : '学生'}
                   </Text>
-                  <MenuItem icon={<Settings24Regular />} onClick={() => navigate('/account')}>
-                    账号设置
+                  <MenuItem
+                    icon={<Settings24Regular />}
+                    onClick={() => navigate(mustChange ? CHANGE_PASSWORD_PATH : '/account')}
+                  >
+                    {mustChange ? '修改密码' : '账号设置'}
                   </MenuItem>
                   <MenuItem icon={<SignOut24Regular />} onClick={handleLogout}>
                     退出登录

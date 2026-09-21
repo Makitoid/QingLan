@@ -5,6 +5,12 @@ export interface User {
   username: string;
   role: Role;
   display_name: string;
+  /**
+   * PW-02：true 时该账号必须先改密才能继续使用。
+   * 前端在路由级拦截（`Guard.RequirePasswordChanged`），后端业务 API 同时返回 403 MUST_CHANGE_PASSWORD。
+   * `/auth/me` 也带该字段，所以刷新页面能恢复拦截态。
+   */
+  must_change_password: boolean;
 }
 
 export interface LoginResponse {
@@ -52,7 +58,29 @@ export interface BoundStudentItem {
   username: string;
   display_name: string;
   is_active: boolean;
+  /** LI-02：未改密徽标。 */
+  must_change_password: boolean;
   groups: GroupRef[];
+}
+
+/**
+ * BD-03：可教组（`teacher_groups` 过滤后的行政班）里的一名成员。
+ * `bound` = 已在自己的学生名单中，前端据此把「拉入」按钮置灰。
+ */
+export interface ClassStudentItem {
+  id: number;
+  username: string;
+  display_name: string;
+  is_active: boolean;
+  bound: boolean;
+}
+
+/** BD-03：`GET /api/teacher/classes` 的一个组（含成员）。 */
+export interface ClassItem {
+  id: number;
+  name: string;
+  member_count: number;
+  students: ClassStudentItem[];
 }
 
 /** 组成员批量写入的返回体，对应后端 GroupMembershipOut。 */
@@ -68,6 +96,49 @@ export interface SuccessResult {
 /** 组成员批量写入方向。 */
 export type GroupMembershipAction = 'add' | 'remove';
 
+/* ---------- 密码凭证（PW-04 / PW-06 / PW-09） ---------- */
+
+/**
+ * 重置密码返回的一行凭证（学生与教师同构，教师复用 `student_id` 字段放教师 id）。
+ * `expires_at` 为 UTC 串；null = 不过期（统一/初始密码，PW-05）。
+ */
+export interface TempCredential {
+  student_id: number;
+  username: string;
+  display_name: string;
+  temp_password: string;
+  expires_at: string | null;
+}
+
+/** PW-06：批量重置的两种模式——全员统一初始密码 / 逐生独立随机。 */
+export type BatchResetMode = 'unified' | 'random';
+
+export interface BatchResetResult {
+  mode: BatchResetMode;
+  count: number;
+  credentials: TempCredential[];
+}
+
+/* ---------- 审计日志（AU-05 / AU-06） ---------- */
+
+export interface AuditLogItem {
+  id: number;
+  actor_id: number | null;
+  actor_name: string;
+  action: string;
+  target_type: string;
+  target_id: number | null;
+  /** 后端存 JSON 文本，出接口时已解成对象；无明细为 null。 */
+  detail: Record<string, unknown> | null;
+  /** UTC 串。 */
+  created_at: string;
+}
+
+export interface AuditLogPage {
+  items: AuditLogItem[];
+  total: number;
+}
+
 /* ---------- admin ---------- */
 
 export interface TeacherItem {
@@ -75,6 +146,8 @@ export interface TeacherItem {
   username: string;
   display_name: string;
   is_active: boolean;
+  /** LI-02：未改密徽标（PW 方案同等适用于教师账号）。 */
+  must_change_password: boolean;
   student_count: number;
 }
 
@@ -83,19 +156,36 @@ export interface StudentItem {
   username: string;
   display_name: string;
   is_active: boolean;
+  /** LI-02：未改密徽标。 */
+  must_change_password: boolean;
   teachers: { id: number; display_name: string }[];
   groups: GroupRef[];
 }
 
+/** LI-01 / LI-02：学生列表的可选筛选参数，全部缺省时行为与旧接口一致。 */
+export interface StudentListQuery {
+  /** 学号 / 姓名模糊匹配。 */
+  q?: string;
+  /** 按组别（行政班）过滤。 */
+  group_id?: number | null;
+  /** true = 只看未改密，false = 只看已改密，undefined = 全部。 */
+  must_change?: boolean | null;
+}
+
+/** BD-02：组-教师分配（可教组别），PUT 为全量替换。 */
+export interface TeacherGroups {
+  teacher_id: number;
+  group_ids: number[];
+}
+
+/** PW-01：`AccountCreate` 已去掉 password —— 初始密码由后端统一发放，无需前端填写。 */
 export interface CreateTeacherBody {
   username: string;
-  password: string;
   display_name: string;
 }
 
 export interface CreateStudentBody {
   username: string;
-  password: string;
   display_name: string;
 }
 
@@ -252,13 +342,30 @@ export interface AssignmentOverview {
   histogram: HistogramBucket[];
 }
 
+/** SC-01：场次成绩行里「每题的有效分」（未提交为 null）。 */
+export interface AssignmentProblemScore {
+  problem_id: number;
+  seq: number;
+  title: string;
+  full_score: number;
+  effective_score: number | null;
+}
+
 export interface AssignmentStudentRow {
   student_id: number;
   /** 学号（后端 M5 起补充，旧数据可能为空）。 */
   username?: string;
   name: string;
   submitted_count: number;
+  /**
+   * 注意语义是「最高单题分」而非总分（SC-01：后端 stats.py 一直如此）。
+   * 多题场次的总分看 `total_score`，列标题文案统一叫「最高单题分」。
+   */
   best_effective_score: number | null;
+  /** SC-01：Σ 每题有效分。 */
+  total_score: number;
+  /** SC-01：逐题有效分，顺序即题单 seq。 */
+  problem_scores: AssignmentProblemScore[];
   last_submitted_at: string | null;
   last_submission_id?: number | null;
 }

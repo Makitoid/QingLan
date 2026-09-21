@@ -1,15 +1,38 @@
 import { useState, type FormEvent } from 'react';
-import { Button, Card, CardHeader, Field, Input, Label, MessageBar, MessageBarBody, Text, tokens } from '@fluentui/react-components';
+import { useNavigate } from 'react-router-dom';
+import {
+  Button,
+  Card,
+  CardHeader,
+  Caption1,
+  Field,
+  Input,
+  Label,
+  MessageBar,
+  MessageBarActions,
+  MessageBarBody,
+  Text,
+  tokens,
+} from '@fluentui/react-components';
 import { Save24Regular } from '@fluentui/react-icons';
 import { changePassword } from '../api';
-import { getStoredUser } from '../api/client';
+import { ApiError } from '../api/client';
 import { errMessage } from '../components/StateViews';
 import { PageHeader } from '../components/PageHeader';
+import { PASSWORD_MIN_LENGTH, PASSWORD_RULES_TEXT, validateNewPassword } from '../components/passwordPolicy';
+import { CHANGE_PASSWORD_PATH, useAuthUser } from '../components/Guard';
 
 const ROLE_LABEL: Record<string, string> = { admin: '管理员', teacher: '教师', student: '学生' };
 
+/**
+ * 账号设置：自助改密（PW-03 与强制改密同一套规则，前端预校验 + 后端 422 中文 message 都显示）。
+ *
+ * `must_change_password=true` 时这里会被路由守卫换成 `/change-password`（PW-02），
+ * 所以本页只在「已改过密」的正常状态下可见。
+ */
 export function AccountPage() {
-  const user = getStoredUser();
+  const navigate = useNavigate();
+  const user = useAuthUser();
   const [oldPassword, setOldPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [confirm, setConfirm] = useState('');
@@ -19,20 +42,22 @@ export function AccountPage() {
   const onSubmit = async (e: FormEvent) => {
     e.preventDefault();
     setMessage(null);
-    if (!oldPassword || !newPassword) {
-      setMessage({ intent: 'error', text: '请填写当前密码与新密码' });
+    if (!user) return;
+    if (!oldPassword || !newPassword || !confirm) {
+      setMessage({ intent: 'error', text: '请填写当前密码、新密码与确认新密码' });
       return;
     }
-    if (newPassword.length < 6) {
-      setMessage({ intent: 'error', text: '新密码至少 6 位' });
+    const invalid = validateNewPassword(newPassword, {
+      username: user.username,
+      displayName: user.display_name,
+      oldPassword,
+    });
+    if (invalid) {
+      setMessage({ intent: 'error', text: invalid });
       return;
     }
     if (newPassword !== confirm) {
       setMessage({ intent: 'error', text: '两次输入的新密码不一致' });
-      return;
-    }
-    if (newPassword === oldPassword) {
-      setMessage({ intent: 'error', text: '新密码不能与当前密码相同' });
       return;
     }
     setBusy(true);
@@ -43,6 +68,12 @@ export function AccountPage() {
       setConfirm('');
       setMessage({ intent: 'success', text: '密码已修改，下次登录请使用新密码' });
     } catch (err) {
+      // 兜底：万一本地登录态是旧的（例如管理员刚重置过），后端会回 403 MUST_CHANGE_PASSWORD，
+      // 此时直接把用户送到强制改密页，别在账号设置页显示一条看不懂的报错。
+      if (err instanceof ApiError && err.code === 'MUST_CHANGE_PASSWORD') {
+        navigate(CHANGE_PASSWORD_PATH, { replace: true });
+        return;
+      }
       setMessage({ intent: 'error', text: errMessage(err) });
     } finally {
       setBusy(false);
@@ -64,13 +95,18 @@ export function AccountPage() {
       {message && (
         <MessageBar intent={message.intent} style={{ borderRadius: tokens.borderRadiusMedium }}>
           <MessageBarBody>{message.text}</MessageBarBody>
+          <MessageBarActions>
+            <Button size="small" appearance="subtle" onClick={() => setMessage(null)}>
+              关闭
+            </Button>
+          </MessageBarActions>
         </MessageBar>
       )}
 
       <Card size="medium">
         <CardHeader header={<Text weight="semibold">修改密码</Text>} />
         <form onSubmit={onSubmit} style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
-          <Field label={<Label htmlFor="ql-acc-old">当前密码</Label>}>
+          <Field label={<Label htmlFor="ql-acc-old">当前密码</Label>} required>
             <Input
               id="ql-acc-old"
               type="password"
@@ -79,7 +115,7 @@ export function AccountPage() {
               autoComplete="current-password"
             />
           </Field>
-          <Field label={<Label htmlFor="ql-acc-new">新密码</Label>} hint="至少 6 位">
+          <Field label={<Label htmlFor="ql-acc-new">新密码</Label>} required hint={PASSWORD_RULES_TEXT}>
             <Input
               id="ql-acc-new"
               type="password"
@@ -88,7 +124,7 @@ export function AccountPage() {
               autoComplete="new-password"
             />
           </Field>
-          <Field label={<Label htmlFor="ql-acc-confirm">确认新密码</Label>}>
+          <Field label={<Label htmlFor="ql-acc-confirm">确认新密码</Label>} required>
             <Input
               id="ql-acc-confirm"
               type="password"
@@ -97,6 +133,9 @@ export function AccountPage() {
               autoComplete="new-password"
             />
           </Field>
+          <Caption1 style={{ color: tokens.colorNeutralForeground3 }}>
+            新密码长度至少 {PASSWORD_MIN_LENGTH} 位；忘了当前密码请联系管理员重置。
+          </Caption1>
           <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
             <Button appearance="primary" type="submit" icon={<Save24Regular />} disabled={busy}>
               {busy ? '提交中…' : '保存新密码'}

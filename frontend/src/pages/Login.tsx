@@ -17,7 +17,7 @@ import { setAuth } from '../api/client';
 import { login } from '../api';
 import { errMessage } from '../components/StateViews';
 import { LoginBackdrop } from '../components/LoginBackdrop';
-import { roleHome } from '../components/Guard';
+import { CHANGE_PASSWORD_PATH, roleHome } from '../components/Guard';
 
 export function LoginPage() {
   const t = useTheme();
@@ -38,7 +38,8 @@ export function LoginPage() {
     try {
       const resp = await login(username.trim(), password);
       setAuth(resp.token, resp.user);
-      navigate(roleHome(resp.user.role), { replace: true });
+      // PW-02：初始密码 / 临时密码登录成功后先到改密页，而不是各自的角色首页。
+      navigate(resp.user.must_change_password ? CHANGE_PASSWORD_PATH : roleHome(resp.user.role), { replace: true });
     } catch (err) {
       setError(errMessage(err));
     } finally {

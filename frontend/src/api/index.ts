@@ -8,6 +8,12 @@ import type {
   User,
   TeacherItem,
   StudentItem,
+  StudentListQuery,
+  TeacherGroups,
+  TempCredential,
+  BatchResetMode,
+  BatchResetResult,
+  AuditLogPage,
   CreateTeacherBody,
   CreateStudentBody,
   ImportResult,
@@ -20,6 +26,7 @@ import type {
   BoundStudentItem,
   BatchResult,
   SuccessResult,
+  ClassItem,
   TestCase,
   CaseBody,
   AssignmentSummary,
@@ -34,6 +41,26 @@ import type {
   StudentSubmissionDetail,
   CreateSubmissionResponse,
 } from './types';
+
+/**
+ * 把可选筛选参数拼成 query string：空串 / null / undefined 一律不上送，
+ * 保证「参数缺省时行为与旧接口完全一致」（LI-01）。
+ */
+function queryString(params: Record<string, string | number | boolean | null | undefined>): string {
+  const usp = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === '') return;
+    usp.set(key, String(value));
+  });
+  const s = usp.toString();
+  return s ? `?${s}` : '';
+}
+
+/** LI-02：布尔筛选 → 后端约定的 '1' / '0'；null / undefined = 不筛选。 */
+function flagParam(value?: boolean | null): string | undefined {
+  if (value === null || value === undefined) return undefined;
+  return value ? '1' : '0';
+}
 
 /* ---------- auth ---------- */
 
@@ -82,10 +109,12 @@ export function changePassword(oldPassword: string, newPassword: string): Promis
 
 /* ---------- admin: teachers ---------- */
 
-export function listTeachers(): Promise<TeacherItem[]> {
-  return request<TeacherItem[]>('/admin/teachers');
+/** LI-01：`q` 匹配工号 / 姓名，缺省时与旧接口行为一致。 */
+export function listTeachers(q?: string): Promise<TeacherItem[]> {
+  return request<TeacherItem[]>(`/admin/teachers${queryString({ q: q?.trim() })}`);
 }
 
+/** PW-01：新建教师不再传密码——后端统一发放初始密码并置 `must_change_password=1`。 */
 export function createTeacher(body: CreateTeacherBody): Promise<TeacherItem> {
   return request<TeacherItem>('/admin/teachers', { method: 'POST', body });
 }
@@ -94,24 +123,46 @@ export function updateTeacherActive(id: number, is_active: boolean): Promise<Tea
   return request<TeacherItem>(`/admin/teachers/${id}`, { method: 'PATCH', body: { is_active } });
 }
 
-export function resetTeacherPassword(id: number, new_password: string): Promise<void> {
-  return request<void>(`/admin/teachers/${id}/reset_password`, { method: 'POST', body: { new_password } });
+/**
+ * PW-04：重置教师密码——无请求体，后端生成 8 位随机密码并在响应里返回给管理员转告本人。
+ * 一次性凭证只能经响应拿到，所以这里返回 `TempCredential`（PW-09）。
+ */
+export function resetTeacherPassword(id: number): Promise<TempCredential> {
+  return request<TempCredential>(`/admin/teachers/${id}/reset_password`, { method: 'POST' });
 }
 
+/** BD-06：admin 直绑写接口（PUT）已删除，这里只保留只读查看。 */
 export function getTeacherStudents(id: number): Promise<{ student_ids: number[] }> {
   return request<{ student_ids: number[] }>(`/admin/teachers/${id}/students`);
 }
 
-export function putTeacherStudents(id: number, studentIds: number[]): Promise<{ student_ids: number[] }> {
-  return request<{ student_ids: number[] }>(`/admin/teachers/${id}/students`, { method: 'PUT', body: { student_ids: studentIds } });
+/** BD-02：读取该教师可教的组别（层 2）。 */
+export function getTeacherGroups(id: number): Promise<TeacherGroups> {
+  return request<TeacherGroups>(`/admin/teachers/${id}/groups`);
+}
+
+/** BD-02：全量替换该教师可教的组别；后端写审计 `teacher_group_assign`。 */
+export function putTeacherGroups(id: number, groupIds: number[]): Promise<TeacherGroups> {
+  return request<TeacherGroups>(`/admin/teachers/${id}/groups`, {
+    method: 'PUT',
+    body: { group_ids: groupIds },
+  });
 }
 
 /* ---------- admin: students ---------- */
 
-export function listStudents(): Promise<StudentItem[]> {
-  return request<StudentItem[]>('/admin/students');
+/** LI-01 / LI-02：`?q=&group_id=&must_change=0|1`，全部缺省即旧行为。 */
+export function listStudents(query: StudentListQuery = {}): Promise<StudentItem[]> {
+  return request<StudentItem[]>(
+    `/admin/students${queryString({
+      q: query.q?.trim(),
+      group_id: query.group_id ?? undefined,
+      must_change: flagParam(query.must_change),
+    })}`,
+  );
 }
 
+/** PW-01：新建学生不传密码，初始密码由系统统一发放。 */
 export function createStudent(body: CreateStudentBody): Promise<StudentItem> {
   return request<StudentItem>('/admin/students', { method: 'POST', body });
 }
@@ -126,8 +177,9 @@ export function updateStudentActive(id: number, is_active: boolean): Promise<Stu
   return request<StudentItem>(`/admin/students/${id}`, { method: 'PATCH', body: { is_active } });
 }
 
-export function resetStudentPassword(id: number, new_password: string): Promise<void> {
-  return request<void>(`/admin/students/${id}/reset_password`, { method: 'POST', body: { new_password } });
+/** PW-04：单个重置无请求体，响应返回随机密码明细（PW-09）。 */
+export function resetStudentPassword(id: number): Promise<TempCredential> {
+  return request<TempCredential>(`/admin/students/${id}/reset_password`, { method: 'POST' });
 }
 
 /* ---------- admin: 学生批量操作 ---------- */
@@ -144,11 +196,17 @@ export function adminBatchGroupMembers(
   });
 }
 
-/** 批量重置密码（后端只算一次 hash 复用到 N 行）。仅管理员有此接口。 */
-export function adminBatchResetPassword(studentIds: number[], newPassword: string): Promise<SuccessResult> {
-  return request<SuccessResult>('/admin/students/batch_reset_password', {
+/**
+ * PW-06：批量重置。`mode='unified'` 全员统一初始密码（整批一次哈希、不过期），
+ * `mode='random'` 逐生独立随机 8 位密码。两种模式都返回逐生凭证明细，由前端拼 CSV（PW-09）。
+ */
+export function adminBatchResetPassword(
+  studentIds: number[],
+  mode: BatchResetMode,
+): Promise<BatchResetResult> {
+  return request<BatchResetResult>('/admin/students/batch_reset_password', {
     method: 'POST',
-    body: { student_ids: studentIds, new_password: newPassword },
+    body: { student_ids: studentIds, mode },
   });
 }
 
@@ -160,7 +218,26 @@ export function adminBatchActive(studentIds: number[], isActive: boolean): Promi
   });
 }
 
-/* ---------- 分组（管理员：完整 CRUD；教师端只读，见 listTeacherGroups） ---------- */
+/* ---------- admin: 审计日志（AU-05 / AU-06） ---------- */
+
+/** 只读、按 created_at 倒序；分页靠 `limit` / `offset`，`total` 判断是否还有下一页。 */
+export function listAuditLogs(params: {
+  action?: string;
+  targetType?: string;
+  limit: number;
+  offset: number;
+}): Promise<AuditLogPage> {
+  return request<AuditLogPage>(
+    `/admin/audit_logs${queryString({
+      action: params.action?.trim(),
+      target_type: params.targetType?.trim(),
+      limit: params.limit,
+      offset: params.offset,
+    })}`,
+  );
+}
+
+/* ---------- 分组（GR-01：管理员是唯一写者） ---------- */
 
 export function listGroups(): Promise<GroupItem[]> {
   return request<GroupItem[]>('/admin/groups');
@@ -181,27 +258,43 @@ export function deleteGroup(id: number): Promise<void> {
   return request<void>(`/admin/groups/${id}`, { method: 'DELETE' });
 }
 
-/* ---------- teacher: 学生与分组（教师端无任何密码相关接口） ---------- */
+/* ---------- teacher: 学生名单（层 3，教师是唯一写者；组别本身对教师只读） ---------- */
 
-/** 我绑定的学生（含分组）。 */
-export function listTeacherStudents(): Promise<BoundStudentItem[]> {
-  return request<BoundStudentItem[]>('/teacher/students');
+/**
+ * LI-01：我的学生名单，`q` 匹配学号 / 姓名。
+ * GR-02 起教师端不再有 `GET /teacher/groups` 与 `POST /teacher/students/group_members`：
+ * 可见的组一律经 `listTeacherClasses()` 拿。
+ */
+export function listTeacherStudents(q?: string): Promise<BoundStudentItem[]> {
+  return request<BoundStudentItem[]>(`/teacher/students${queryString({ q: q?.trim() })}`);
 }
 
-/** 全站分组定义，教师端只读。 */
-export function listTeacherGroups(): Promise<GroupItem[]> {
-  return request<GroupItem[]>('/teacher/groups');
+/** BD-03：我可教的组（经 `teacher_groups` 过滤）及其成员，只读。 */
+export function listTeacherClasses(): Promise<ClassItem[]> {
+  return request<ClassItem[]>('/teacher/classes');
 }
 
-/** 批量调整自己绑定学生的组成员关系；含未绑定学生时后端 403 整批拒绝。 */
-export function teacherBatchGroupMembers(
-  studentIds: number[],
-  groupIds: number[],
-  action: GroupMembershipAction,
-): Promise<BatchResult> {
-  return request<BatchResult>('/teacher/students/group_members', {
+/** BD-03：从可教组里把学生拉进自己的名单；有任一学生不在可教组时整批 403。幂等。 */
+export function teacherBindFromClass(studentIds: number[]): Promise<BatchResult> {
+  return request<BatchResult>('/teacher/students/bind_from_class', {
     method: 'POST',
-    body: { student_ids: studentIds, group_ids: groupIds, action },
+    body: { student_ids: studentIds },
+  });
+}
+
+/** BD-04：按学生 id 兜底添加（转学生 / 旁听等暂不在组的情况）。 */
+export function teacherBindStudents(studentIds: number[]): Promise<BatchResult> {
+  return request<BatchResult>('/teacher/students/bind', {
+    method: 'POST',
+    body: { student_ids: studentIds },
+  });
+}
+
+/** BD-05：把自己的名单里的学生移出；历史提交与成绩保留。幂等。 */
+export function teacherUnbindStudents(studentIds: number[]): Promise<BatchResult> {
+  return request<BatchResult>('/teacher/students/unbind', {
+    method: 'POST',
+    body: { student_ids: studentIds },
   });
 }
 
