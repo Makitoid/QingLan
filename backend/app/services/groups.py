@@ -14,7 +14,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from ..core.security import APIError
-from ..models import Group, GroupMember, TeacherGroup, User
+from ..models import (Assignment, AssignmentSubgroup, Group, GroupMember,
+                      TeacherGroup, TeacherStudent, TeacherSubgroup,
+                      TeacherSubgroupMember, User)
 from ..schemas import GroupRef
 
 MAX_GROUP_NAME_LEN = 50
@@ -231,3 +233,182 @@ def validate_student_ids(db: Session, student_ids: list[int]) -> list[User]:
     if {r.id for r in rows} != set(ids):
         raise APIError(422, "INVALID_STUDENT_IDS", "存在无效或非学生的用户 ID")
     return sorted(rows, key=lambda u: u.id)
+
+
+# ---------- 0.3.2 F1：可教组并集名单 / 子分组 / 发布受众 ----------
+#
+# 名单口径（决策 1b/1e）：`可教组成员 ∪ 手动添加`，是名单、统计、受众三处的唯一来源。
+# 本模块只放「层 2 并集」与「子分组」两件事；组装 User 行与教师反查见 stats.bound_students。
+
+def teachable_student_ids(db: Session, teacher_id: int) -> set[int]:
+    """经 teacher_groups 分配给该教师的所有组的成员 ID（去重，层 2 并集）。"""
+    return set(db.execute(
+        select(GroupMember.student_id)
+        .join(TeacherGroup, TeacherGroup.group_id == GroupMember.group_id)
+        .where(TeacherGroup.teacher_id == teacher_id)
+    ).scalars().all())
+
+
+def teachable_group_names_by_student(db: Session, teacher_id: int) -> dict[int, list[str]]:
+    """{student_id: [含该生的可教组名]}，按组名排序（admin 教师详情名单的 group_names 列）。"""
+    rows = db.execute(
+        select(GroupMember.student_id, Group.name)
+        .join(TeacherGroup, TeacherGroup.group_id == GroupMember.group_id)
+        .join(Group, Group.id == GroupMember.group_id)
+        .where(TeacherGroup.teacher_id == teacher_id)
+        .order_by(Group.name, Group.id)
+    ).all()
+    result: dict[int, list[str]] = {}
+    for student_id, name in rows:
+        result.setdefault(student_id, []).append(name)
+    return result
+
+
+def student_ids_in_groups(db: Session, group_ids: list[int]) -> dict[int, set[int]]:
+    """{group_id: {student_id}}（只含 role=student），组别撤销时的差集统计用。"""
+    ids = sorted(dict.fromkeys(group_ids))
+    if not ids:
+        return {}
+    rows = db.execute(
+        select(GroupMember.group_id, GroupMember.student_id)
+        .join(User, User.id == GroupMember.student_id)
+        .where(GroupMember.group_id.in_(ids), User.role == "student")
+    ).all()
+    result: dict[int, set[int]] = {}
+    for group_id, student_id in rows:
+        result.setdefault(group_id, set()).add(student_id)
+    return result
+
+
+def manual_student_ids(db: Session, teacher_id: int) -> set[int]:
+    """层 3「手动添加」的原始行（未过 role/is_active 口径），unbind 与通知的差集口径用。"""
+    return set(db.execute(
+        select(TeacherStudent.student_id).where(TeacherStudent.teacher_id == teacher_id)
+    ).scalars().all())
+
+
+def roster_count_by_teacher(db: Session) -> dict[int, int]:
+    """每个教师的名单人数（可教组并集 ∪ 手动添加，只算 role=student），admin 列表页用。
+
+    两条聚合查询后在内存取并集，避免逐教师 N+1。没有名单的教师不出现在结果里，
+    调用方按 `counts.get(tid, 0)` 兜底。
+    """
+    roster: dict[int, set[int]] = {}
+    for teacher_id, student_id in db.execute(
+        select(TeacherGroup.teacher_id, GroupMember.student_id)
+        .join(GroupMember, GroupMember.group_id == TeacherGroup.group_id)
+        .join(User, User.id == GroupMember.student_id)
+        .where(User.role == "student")
+    ).all():
+        roster.setdefault(teacher_id, set()).add(student_id)
+    for teacher_id, student_id in db.execute(
+        select(TeacherStudent.teacher_id, TeacherStudent.student_id)
+        .join(User, User.id == TeacherStudent.student_id)
+        .where(User.role == "student")
+    ).all():
+        roster.setdefault(teacher_id, set()).add(student_id)
+    return {teacher_id: len(ids) for teacher_id, ids in roster.items()}
+
+
+# ---------- 子分组（教师私有，层 3 之上的组织单位）----------
+
+def require_owned_subgroup(db: Session, teacher_id: int, subgroup_id: int) -> TeacherSubgroup:
+    """取自己的子分组：不存在或不属于该教师 → 404（不区分，避免泄露他人子分组是否存在）。"""
+    subgroup = db.get(TeacherSubgroup, subgroup_id)
+    if subgroup is None or subgroup.teacher_id != teacher_id:
+        raise APIError(404, "SUBGROUP_NOT_FOUND", "子分组不存在")
+    return subgroup
+
+
+def owned_subgroup_ids(db: Session, teacher_id: int, subgroup_ids: list[int]) -> list[int]:
+    """校验这批 id（去重保序）全属该教师；任一不合法整批 422（发布受众入参校验）。"""
+    ids = list(dict.fromkeys(subgroup_ids))
+    if not ids:
+        raise APIError(422, "EMPTY_SELECTION", "未选择任何子分组")
+    owned = set(db.execute(
+        select(TeacherSubgroup.id).where(
+            TeacherSubgroup.teacher_id == teacher_id, TeacherSubgroup.id.in_(ids)
+        )
+    ).scalars().all())
+    if owned != set(ids):
+        raise APIError(422, "SUBGROUP_NOT_FOUND", "存在不属于你的子分组")
+    return ids
+
+
+def subgroup_member_ids(db: Session, subgroup_id: int) -> set[int]:
+    return set(db.execute(
+        select(TeacherSubgroupMember.student_id).where(
+            TeacherSubgroupMember.subgroup_id == subgroup_id
+        )
+    ).scalars().all())
+
+
+def replace_subgroup_members(db: Session, subgroup_id: int, student_ids: list[int]) -> tuple[list[int], list[int]]:
+    """全量替换子分组成员，**不 commit**（供调用方把审计写进同一事务）。
+
+    返回 (added, removed)。调用方需先保证 student_ids ⊆ 当前名单。
+    """
+    target = set(student_ids)
+    old = subgroup_member_ids(db, subgroup_id)
+    added = sorted(target - old)
+    removed = sorted(old - target)
+    for student_id in removed:
+        db.delete(db.get(TeacherSubgroupMember, (subgroup_id, student_id)))
+    for student_id in added:
+        db.add(TeacherSubgroupMember(subgroup_id=subgroup_id, student_id=student_id))
+    return added, removed
+
+
+def assignments_using_subgroup(db: Session, subgroup_id: int) -> list[Assignment]:
+    """引用了该子分组的场次（删除保护用，按 id 升序）。"""
+    return list(db.execute(
+        select(Assignment)
+        .join(AssignmentSubgroup, AssignmentSubgroup.assignment_id == Assignment.id)
+        .where(AssignmentSubgroup.subgroup_id == subgroup_id)
+        .order_by(Assignment.id)
+    ).scalars().all())
+
+
+def assignment_subgroup_ids(db: Session, assignment_id: int) -> list[int]:
+    return sorted(db.execute(
+        select(AssignmentSubgroup.subgroup_id).where(
+            AssignmentSubgroup.assignment_id == assignment_id
+        )
+    ).scalars().all())
+
+
+def bind_assignment_subgroups(db: Session, assignment_id: int, subgroup_ids: list[int]) -> None:
+    """写入场次-子分组白名单（调用方自行 commit；入参须已校验归属）。"""
+    for subgroup_id in dict.fromkeys(subgroup_ids):
+        db.add(AssignmentSubgroup(assignment_id=assignment_id, subgroup_id=subgroup_id))
+
+
+def clear_assignment_subgroups(db: Session, assignment_id: int) -> None:
+    db.query(AssignmentSubgroup).filter(
+        AssignmentSubgroup.assignment_id == assignment_id
+    ).delete(synchronize_session=False)
+
+
+# ---------- 发布受众（决策 1c）----------
+
+def audience_students(db: Session, assignment: Assignment) -> list[User]:
+    """本场次的受众学生：先取名单（可教组并集 ∪ 手动添加），再按受众模式收窄。
+
+    - ``'all'``（老数据默认）→ 名单原样返回，行为与 0.3.1 一致；
+    - ``'subgroup'`` → 与 assignment_subgroups 指定的、且仍属该教师的子分组成员求交集
+      （限定 teacher_id 防跨教师越权；子分组删除受 409 保护，此处只会更小）。
+    """
+    from .stats import bound_students  # 局部导入：stats 依赖本模块的 teachable_student_ids
+
+    students = bound_students(db, assignment.created_by)
+    if (assignment.audience_mode or "all") != "subgroup":
+        return students
+    allowed = set(db.execute(
+        select(TeacherSubgroupMember.student_id)
+        .join(AssignmentSubgroup,
+              AssignmentSubgroup.subgroup_id == TeacherSubgroupMember.subgroup_id)
+        .join(TeacherSubgroup, TeacherSubgroup.id == TeacherSubgroupMember.subgroup_id)
+        .where(AssignmentSubgroup.assignment_id == assignment.id,
+               TeacherSubgroup.teacher_id == assignment.created_by)
+    ).scalars().all())
+    return [s for s in students if s.id in allowed]

@@ -32,15 +32,17 @@ from ..core.security import (APIError, generate_temp_password,
                              hash_password_many, require_admin, temp_password_expires_at,
                              utcnow_str)
 from ..models import (AuditLog, Group, GroupMember, SiteSetting, TeacherGroup,
-                      TeacherStudent, User)
+                      TeacherNotice, User)
 from ..schemas import (AccountCreate, AuditLogOut, AuditLogPageOut, BatchActiveRequest,
                        BatchResetPasswordRequest, BatchResetResultOut, GroupCreate,
                        GroupMembershipOut, GroupMembersRequest, GroupOut, GroupRef,
                        GroupUpdate, ImportFailure, ImportResult, IsActivePatch,
-                       SettingsOut, SettingsUpdate, StudentOut, TeacherGroupsOut,
-                       TeacherGroupsRequest, TeacherOut, TempCredentialOut, UserOut)
+                       RosterEntryOut, SettingsOut, SettingsUpdate, StudentOut,
+                       TeacherGroupsOut, TeacherGroupsRequest, TeacherOut,
+                       TeacherRosterOut, TempCredentialOut, UserOut)
 from ..services import export as export_svc
 from ..services import groups as groups_svc
+from ..services import stats
 from ..services.audit import log_audit
 
 router = APIRouter()
@@ -61,10 +63,6 @@ TXT_ALT_SEP_RE = re.compile(r"[,，]")
 HEADER_FIRST_CELLS = {"学号", "学生ID"}
 # 统一中间表示：(行号, 学号, 姓名, [组别], [教师用户名])
 ImportRow = tuple[int, str, str, list[str], list[str]]
-
-
-class StudentIdsOut(BaseModel):
-    student_ids: list[int]
 
 
 class BgImageOut(BaseModel):
@@ -198,11 +196,8 @@ def settings_to_out(s: SiteSetting) -> SettingsOut:
 @router.get("/admin/teachers", response_model=list[TeacherOut])
 def list_teachers(q: str | None = None, db: Session = Depends(get_db), _: User = Depends(require_admin)):
     teachers = search_users(db.query(User).filter(User.role == "teacher"), q).order_by(User.id).all()
-    counts = dict(
-        db.query(TeacherStudent.teacher_id, func.count(TeacherStudent.student_id))
-        .group_by(TeacherStudent.teacher_id)
-        .all()
-    )
+    # 0.3.2 F1：名单人数改为「可教组并集 ∪ 手动添加」口径（与 /teacher/students 同源）
+    counts = groups_svc.roster_count_by_teacher(db)
     return [teacher_to_out(t, counts.get(t.id, 0)) for t in teachers]
 
 
@@ -220,12 +215,8 @@ def patch_teacher(teacher_id: int, body: IsActivePatch, db: Session = Depends(ge
               {"is_active": bool(body.is_active)})
     db.commit()
     db.refresh(user)
-    count = (
-        db.query(func.count(TeacherStudent.student_id))
-        .filter(TeacherStudent.teacher_id == user.id)
-        .scalar()
-    )
-    return teacher_to_out(user, count or 0)
+    # 同一并集口径（可教组 ∪ 手动添加）
+    return teacher_to_out(user, len(stats.bound_students(db, user.id)))
 
 
 @router.post("/admin/teachers/{teacher_id}/reset_password", response_model=TempCredentialOut)
@@ -235,17 +226,26 @@ def reset_teacher_password(teacher_id: int, db: Session = Depends(get_db), admin
     return reset_to_temp_password(db, admin, user, "teacher_reset_pw")
 
 
-@router.get("/admin/teachers/{teacher_id}/students", response_model=StudentIdsOut)
+@router.get("/admin/teachers/{teacher_id}/students", response_model=TeacherRosterOut)
 def list_teacher_students(teacher_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
-    """BD-06：admin 保留教师名单的只读视图（写接口已删除，层 3 唯一写者是教师本人）。"""
+    """BD-06 + 0.3.2 F1：admin 保留教师名单的只读视图（写接口已删除，层 3 唯一写者是教师本人）。
+
+    名单口径 = 可教组成员 ∪ 手动添加；每条给出 source（manual/group）与该生所在的可教组名，
+    供教师详情页渲染矩阵来源角标。撤销组别后该组学生立即从本视图消失（手动添加者不受影响）。
+    """
     get_role_user(db, teacher_id, "teacher")
-    ids = (
-        db.query(TeacherStudent.student_id)
-        .filter(TeacherStudent.teacher_id == teacher_id)
-        .order_by(TeacherStudent.student_id)
-        .all()
-    )
-    return StudentIdsOut(student_ids=[i[0] for i in ids])
+    manual = groups_svc.manual_student_ids(db, teacher_id)
+    group_names = groups_svc.teachable_group_names_by_student(db, teacher_id)
+    return TeacherRosterOut(students=[
+        RosterEntryOut(
+            id=s.id,
+            username=s.username,
+            display_name=s.display_name,
+            source="manual" if s.id in manual else "group",
+            group_names=group_names.get(s.id, []),
+        )
+        for s in stats.bound_students(db, teacher_id)
+    ])
 
 
 def teacher_group_ids(db: Session, teacher_id: int) -> list[int]:
@@ -265,7 +265,11 @@ def list_teacher_groups(teacher_id: int, db: Session = Depends(get_db), _: User 
 @router.put("/admin/teachers/{teacher_id}/groups", response_model=TeacherGroupsOut)
 def replace_teacher_groups(teacher_id: int, body: TeacherGroupsRequest, db: Session = Depends(get_db),
                            admin: User = Depends(require_admin)):
-    """BD-02：全量替换某教师的可教组（页面 diff 确认后提交；空列表 = 清空分配）。"""
+    """BD-02：全量替换某教师的可教组（页面 diff 确认后提交；空列表 = 清空分配）。
+
+    决策 1e：撤销组别即刻清名单 —— 保存前先算差集，把「因本次撤销而离开名单」的学生
+    写成一条 teacher_notices(kind='group_revoked')，与该变更同事务提交，教师下次登录弹窗说明。
+    """
     get_role_user(db, teacher_id, "teacher")
     group_ids = sorted(dict.fromkeys(body.group_ids))
     # 任一不存在的组 → 404 GROUP_NOT_FOUND，整批不写
@@ -273,11 +277,35 @@ def replace_teacher_groups(teacher_id: int, body: TeacherGroupsRequest, db: Sess
     current = set(teacher_group_ids(db, teacher_id))
     target = set(group_ids)
     removed = sorted(current - target)
+
+    # 新名单 = 新的可教组并集 ∪ 手动添加（手动添加者不算「离开」）
+    new_teachable: set[int] = set()
+    for members in groups_svc.student_ids_in_groups(db, sorted(target)).values():
+        new_teachable |= members
+    new_roster = new_teachable | groups_svc.manual_student_ids(db, teacher_id)
+    removed_members = groups_svc.student_ids_in_groups(db, removed)
+    lost_groups: list[dict] = []
+    lost_students: set[int] = set()
+    for gid in removed:
+        lost = removed_members.get(gid, set()) - new_roster
+        lost_students |= lost
+        group = db.get(Group, gid)
+        lost_groups.append({"id": gid, "name": group.name if group else "", "lost_count": len(lost)})
+
     for gid in removed:
         db.query(TeacherGroup).filter(
             TeacherGroup.teacher_id == teacher_id, TeacherGroup.group_id == gid
         ).delete(synchronize_session=False)
     groups_svc.assign_teacher_groups(db, [(teacher_id, gid) for gid in sorted(target - current)])
+    if lost_students:
+        # 无人离开时不打扰教师；有人离开时一次性说明所有被撤销组的损失
+        db.add(TeacherNotice(
+            teacher_id=teacher_id,
+            kind="group_revoked",
+            payload=json.dumps(
+                {"groups": lost_groups, "total_lost": len(lost_students)}, ensure_ascii=False
+            ),
+        ))
     log_audit(db, admin, "teacher_group_assign", "teacher", teacher_id,
               {"group_ids": sorted(target), "added": sorted(target - current),
                "removed": removed})
@@ -312,14 +340,8 @@ def list_students(q: str | None = None, group_id: int | None = None,
     if must_change is not None:
         query = query.filter(User.must_change_password == (1 if must_change else 0))
     students = query.order_by(User.id).all()
-    binds = (
-        db.query(TeacherStudent.student_id, User)
-        .join(User, User.id == TeacherStudent.teacher_id)
-        .all()
-    )
-    teacher_map: dict[int, list[User]] = {}
-    for student_id, teacher in binds:
-        teacher_map.setdefault(student_id, []).append(teacher)
+    # 0.3.2 F1：学生→教师反查走与名单同一并集口径（组别被撤销后教师立即消失）
+    teacher_map = stats.bound_teacher_map(db, [s.id for s in students])
     # 分组同理一次联查构建 map，避免 N+1
     group_map = groups_svc.groups_map_for_students(db, [s.id for s in students])
     return [
@@ -552,12 +574,8 @@ def patch_student(student_id: int, body: IsActivePatch, db: Session = Depends(ge
               {"is_active": bool(body.is_active)})
     db.commit()
     db.refresh(user)
-    teachers = (
-        db.query(User)
-        .join(TeacherStudent, TeacherStudent.teacher_id == User.id)
-        .filter(TeacherStudent.student_id == student_id)
-        .all()
-    )
+    # 同一并集口径（可教组 ∪ 手动添加），与列表接口一致
+    teachers = stats.bound_teacher_map(db, [student_id]).get(student_id, [])
     group_map = groups_svc.groups_map_for_students(db, [student_id])
     return student_to_out(user, teachers, group_map.get(student_id, []))
 

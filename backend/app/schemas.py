@@ -81,6 +81,51 @@ class StudentOut(ORMModel):
     groups: list[GroupRef] = []
 
 
+# B1（0.3.2 F1）：admin 教师详情名单的一名学生。
+# source：'manual' = 教师按学号手动添加（层 3 有行）；'group' = 仅由可教组别派生。
+# group_names：含该生的可教组别名（手动添加且不在任何组里时为空数组）。
+class RosterEntryOut(BaseModel):
+    id: int
+    username: str
+    display_name: str
+    source: Literal["manual", "group"]
+    group_names: list[str] = []
+
+
+class TeacherRosterOut(BaseModel):
+    students: list[RosterEntryOut] = []
+
+
+class SubgroupCreate(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+
+
+class SubgroupUpdate(BaseModel):
+    name: str = Field(min_length=1, max_length=50)
+
+
+class SubgroupStudentsRequest(BaseModel):
+    """PUT /teacher/subgroups/{id}/students：全量替换（空列表 = 清空成员）。"""
+
+    student_ids: list[int]
+
+
+class SubgroupOut(BaseModel):
+    id: int
+    name: str
+    created_at: str
+    # 成员数与学生 ID 都按「当前名单口径」给出（已撤销组别的学生不再计入）
+    member_count: int = 0
+    student_ids: list[int] = []
+
+
+class TeacherNoticeOut(BaseModel):
+    id: int
+    kind: str | None = None
+    payload: dict | None = None
+    created_at: str
+
+
 class GroupOut(ORMModel):
     id: int
     name: str
@@ -316,6 +361,9 @@ class AssignmentCreate(BaseModel):
     end_time: str
     max_submissions: int | None = Field(default=None, ge=1)
     score_policy: str = Field(default="best", pattern="^(best|last)$")
+    # 0.3.2 F1 发布受众：'all' = 全部名单（缺省，与老行为一致）；'subgroup' 须给出 subgroup_ids
+    audience_mode: Literal["all", "subgroup"] = "all"
+    subgroup_ids: list[int] = []
     problems: list[AssignmentProblemIn] = Field(min_length=1)
 
 
@@ -325,6 +373,8 @@ class AssignmentUpdate(BaseModel):
     end_time: str | None = None
     max_submissions: int | None = None
     score_policy: str | None = None
+    audience_mode: Literal["all", "subgroup"] | None = None
+    subgroup_ids: list[int] | None = None
     problems: list[AssignmentProblemIn] | None = None
 
 
@@ -345,6 +395,9 @@ class AssignmentOut(ORMModel):
     score_policy: str
     released: int
     released_at: str | None
+    # 0.3.2 F1：受众模式与子分组白名单（'all' 时恒为空数组，老数据行为不变）
+    audience_mode: str = "all"
+    subgroup_ids: list[int] = []
     created_by: int
     created_at: str
     problems: list[AssignmentProblemOut] = []

@@ -376,8 +376,11 @@ class TestTeacherMembership:
         assert roster_pairs(db) == before
         assert scalar(db, "SELECT COUNT(*) FROM teacher_students") == 0
         assert audit_rows(db, "teacher_student_bind") == []
-        # 教师侧列表同样没有幽灵成员
-        assert client.get("/api/teacher/students", headers=h_teacher).json() == []
+        # 0.3.2 F1：名单口径改为「可教组并集」，失败的整批不加手动行 ——
+        # 但 mine 本就是我组里的人，所以教师名单里能看见他（来源为组别，不是幽灵成员）
+        roster = client.get("/api/teacher/students", headers=h_teacher).json()
+        assert [r["username"] for r in roster] == [mine.username]
+        assert roster_pairs(db) == set()
 
         # 层 1 仍由 admin 独写：改组成员成功并写审计
         added = client.post("/api/admin/students/group_members", headers=h_admin, json={
@@ -427,12 +430,20 @@ class TestTeacherMembership:
         assert roster_pairs(db) == {(teacher2.id, foreign.id)}
         # 组定义（层 1）不因移除名单而受影响
         assert member_pairs(db) == {(group.id, mine.id)}
-        # 重复移除幂等：0 条、不报错
+        # 0.3.2 F1 语义收窄：手动行移走后 mine 仍在名单里（由可教组派生），
+        # 再次 unbind 他不再幂等成功，而是整批 422 ROSTER_DERIVED_STUDENT
+        assert [r["username"] for r in
+                client.get("/api/teacher/students", headers=h_teacher).json()] == [mine.username]
         again = client.post("/api/teacher/students/unbind", headers=h_teacher,
                            json={"student_ids": [mine.id]})
-        assert again.status_code == 200, again.text
-        assert again.json() == {"success_count": 0}
-        assert client.get("/api/teacher/students", headers=h_teacher).json() == []
+        assert again.status_code == 422, again.text
+        assert code_of(again) == "ROSTER_DERIVED_STUDENT"
+        assert str(mine.id) in again.json()["message"]
+        # 非名单内且非组派生（别人的学生）仍静默忽略
+        ignored = client.post("/api/teacher/students/unbind", headers=h_teacher,
+                              json={"student_ids": [foreign.id]})
+        assert ignored.status_code == 200, ignored.text
+        assert ignored.json() == {"success_count": 0}
 
         fresh(db)
         logs = audit_rows(db, "teacher_student_unbind")
@@ -468,10 +479,16 @@ class TestTeacherMembership:
         assert bound.json() == {"success_count": 2}, bound.text
 
         # BD-06：admin 保留教师名单的只读视图（唯一写者是教师本人）
+        # 0.3.2 F1：名单条目带 source（manual/group）与所在可教组名
         url = f"/api/admin/teachers/{teacher.id}/students"
         resp = client.get(url, headers=h_admin)
         assert resp.status_code == 200, resp.text
-        assert resp.json() == {"student_ids": sorted([s1.id, s2.id])}
+        assert resp.json() == {"students": [
+            {"id": s1.id, "username": "r1", "display_name": "学生r1",
+             "source": "manual", "group_names": ["名单班"]},
+            {"id": s2.id, "username": "r2", "display_name": "学生r2",
+             "source": "manual", "group_names": ["名单班"]},
+        ]}
         # 写接口已删除：同路径只剩 405/404，且不会动到库
         for method in ("put", "delete"):
             gone = client.request(method.upper(), url, headers=h_admin,
@@ -546,10 +563,15 @@ class TestDeprecatedEndpoints:
         paths = app.openapi()["paths"]
         for _method, path in DEPRECATED_PATHS:
             assert path not in paths, path
-        # 教师端组相关的只读入口只有 /classes 一个
+        # 教师端组相关的入口：只读的 /classes + 0.3.2 F1 新增的教师私有三条子分组路由
         teacher_group_paths = {p for p in paths if p.startswith("/api/teacher")
                                and ("group" in p or p.endswith("/classes"))}
-        assert teacher_group_paths == {"/api/teacher/classes"}
+        assert teacher_group_paths == {
+            "/api/teacher/classes",
+            "/api/teacher/subgroups",
+            "/api/teacher/subgroups/{subgroup_id}",
+            "/api/teacher/subgroups/{subgroup_id}/students",
+        }
 
 
 # ---------- 4. admin 分组 CRUD ----------

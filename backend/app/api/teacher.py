@@ -11,7 +11,8 @@ from ..core.db import get_db
 from ..core.security import APIError, require_teacher, utcnow_str
 from ..models import (Assignment, AssignmentProblem, Group, GroupMember,
                       Problem, Submission, SubmissionResult, TeacherGroup,
-                      TeacherStudent, TestCase, User)
+                      TeacherNotice, TeacherStudent, TeacherSubgroup,
+                      TeacherSubgroupMember, TestCase, User)
 from ..services import export as export_svc
 from ..services import groups as groups_svc
 from ..services import scoring
@@ -93,6 +94,14 @@ def _validate_window(start_time: str, end_time: str):
         raise APIError(422, "VALIDATION_ERROR", "结束时间必须晚于开始时间")
 
 
+def _resolve_audience(db: Session, teacher: User, mode: str,
+                      subgroup_ids: list[int]) -> tuple[str, list[int]]:
+    """发布受众入参校验：'all' 忽略 subgroup_ids；'subgroup' 须全属该教师（否则整批 422）。"""
+    if mode == "subgroup":
+        return "subgroup", groups_svc.owned_subgroup_ids(db, teacher.id, subgroup_ids)
+    return "all", []
+
+
 def _assignment_out(db: Session, assignment: Assignment) -> dict:
     problems = []
     for ap in stats.assignment_problems_ordered(db, assignment.id):
@@ -113,6 +122,8 @@ def _assignment_out(db: Session, assignment: Assignment) -> dict:
         "score_policy": assignment.score_policy,
         "released": assignment.released,
         "released_at": assignment.released_at,
+        "audience_mode": assignment.audience_mode or "all",
+        "subgroup_ids": groups_svc.assignment_subgroup_ids(db, assignment.id),
         "created_by": assignment.created_by,
         "created_at": assignment.created_at,
         "problems": problems,
@@ -292,6 +303,9 @@ def create_assignment(body: schemas.AssignmentCreate,
                       db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
     _validate_window(body.start_time, body.end_time)
     _validate_assignment_problems(db, teacher, body.problems)
+    audience_mode, subgroup_ids = _resolve_audience(
+        db, teacher, body.audience_mode, body.subgroup_ids
+    )
     assignment = Assignment(
         title=body.title,
         mode=body.mode,
@@ -299,10 +313,12 @@ def create_assignment(body: schemas.AssignmentCreate,
         end_time=body.end_time,
         max_submissions=body.max_submissions,
         score_policy=body.score_policy,
+        audience_mode=audience_mode,
         created_by=teacher.id,
     )
     db.add(assignment)
     db.flush()
+    groups_svc.bind_assignment_subgroups(db, assignment.id, subgroup_ids)
     for item in body.problems:
         db.add(AssignmentProblem(
             assignment_id=assignment.id,
@@ -341,11 +357,25 @@ def update_assignment(assignment_id: int, body: schemas.AssignmentUpdate,
         _validate_assignment_problems(db, teacher, items)
     if "score_policy" in changes and changes["score_policy"] not in SCORE_POLICIES:
         raise APIError(422, "VALIDATION_ERROR", "计分策略不合法")
+    # 0.3.2 F1：受众可在开赛前改；未给 subgroup_ids 时沿用该场次既有白名单
+    audience: tuple[str, list[int]] | None = None
+    if "audience_mode" in changes or "subgroup_ids" in changes:
+        merged_mode = changes.get("audience_mode", assignment.audience_mode or "all")
+        merged_ids = changes.get("subgroup_ids")
+        if merged_mode == "subgroup" and merged_ids is None:
+            merged_ids = groups_svc.assignment_subgroup_ids(db, assignment.id)
+        audience = _resolve_audience(db, teacher, merged_mode, merged_ids or [])
+        changes.pop("audience_mode", None)
+        changes.pop("subgroup_ids", None)
     merged_start = changes.get("start_time", assignment.start_time)
     merged_end = changes.get("end_time", assignment.end_time)
     _validate_window(merged_start, merged_end)
     for field, value in changes.items():
         setattr(assignment, field, value)
+    if audience is not None:
+        assignment.audience_mode = audience[0]
+        groups_svc.clear_assignment_subgroups(db, assignment.id)
+        groups_svc.bind_assignment_subgroups(db, assignment.id, audience[1])
     if "problems" in body.model_fields_set:
         old = db.execute(
             select(AssignmentProblem).where(AssignmentProblem.assignment_id == assignment.id)
@@ -509,8 +539,10 @@ def patch_manual_score(submission_id: int, body: schemas.ManualScorePatch,
 #   层 1  groups / group_members —— admin 唯一写者；教师只能读到「自己可教的组」，
 #         且只经 /classes 这一条路径（GR-02：/groups 与批量改组成员接口已废弃）。
 #   层 2  teacher_groups         —— admin 分配哪个教师可教哪个组。
-#   层 3  teacher_students       —— 教师自己的名单，唯一写者是教师本人，且只能在
-#         可教组内（主路径）或按有效学号（兜底）拉人，拉/移均幂等。
+#   层 3  teacher_students       —— **语义收窄（0.3.2 F1）**：只表示「教师按学号/从班级
+#         手动添加的学生」。教师实际名单 = 层 2 可教组成员 ∪ 层 3 手动添加
+#         （唯一口径见 services/stats.bound_students），撤销组别即刻清名单。
+#   层 3+ teacher_subgroups      —— 教师私有的子分组，只用于收窄发布受众（0.3.2 F1）。
 #
 # 与既有风格一致：所有写操作单事务，先全量校验、后写入，任一不合法整批拒绝。
 
@@ -524,7 +556,7 @@ def _requested_student_ids(raw: list[int]) -> list[int]:
 
 
 def _my_student_ids(db: Session, teacher_id: int) -> set[int]:
-    """我的名单（层 3）里的学生 ID。"""
+    """层 3 手动添加行（注意：不是完整名单 —— 完整名单见 stats.bound_students）。"""
     return set(db.execute(
         select(TeacherStudent.student_id).where(TeacherStudent.teacher_id == teacher_id)
     ).scalars().all())
@@ -555,7 +587,10 @@ def _bind_students(db: Session, teacher: User, student_ids: list[int], source: s
 @router.get("/students", response_model=list[schemas.BoundStudentOut])
 def list_bound_students(q: str | None = None,
                         db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
-    """我的名单（层 3）。q 为 username / display_name 的模糊匹配（大小写不敏感），缺省时行为不变。"""
+    """我的名单 = 可教组成员 ∪ 手动添加（0.3.2 F1 起教师端不再需要逐个拉人）。
+
+    q 为 username / display_name 的模糊匹配（大小写不敏感），缺省时行为不变。
+    """
     students = list(stats.bound_students(db, teacher.id))
     keyword = (q or "").strip().lower()
     if keyword:
@@ -662,15 +697,202 @@ def bind_students_by_ids(body: schemas.BindStudentsRequest,
 @router.post("/students/unbind", response_model=schemas.GroupMembershipOut)
 def unbind_students(body: schemas.BindStudentsRequest,
                     db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
-    """BD-05：只能从自己的名单里移除；不在名单里的直接忽略（幂等，不算错）。
+    """BD-05 语义收窄（0.3.2 F1）：只能移走「手动添加」的学生，且只能移自己的。
+
+    组别派生的学生不在 `teacher_students` 里，只能由管理员撤销组别来移除；
+    批次里只要有一个这样的 id 就整批 422 ROSTER_DERIVED_STUDENT 并列出 id（不写库）。
+    不在名单里的 id 照旧静默忽略（幂等，不算错）。
 
     移除后历史提交/成绩保留，教师统计仍可见（见 specs「移除学生后历史成绩可见性」）。
     """
     student_ids = _requested_student_ids(body.student_ids)
-    removed = sorted(_my_student_ids(db, teacher.id) & set(student_ids))
+    requested = set(student_ids)
+    manual = _my_student_ids(db, teacher.id)
+    derived = sorted((requested & groups_svc.teachable_student_ids(db, teacher.id)) - manual)
+    if derived:
+        ids_text = "、".join(str(i) for i in derived)
+        raise APIError(422, "ROSTER_DERIVED_STUDENT",
+                       f"学生 {ids_text} 来自可教组别，需由管理员撤销组别后才能移出名单")
+    removed = sorted(manual & requested)
     for sid in removed:
         db.delete(db.get(TeacherStudent, (teacher.id, sid)))
     log_audit(db, teacher, "teacher_student_unbind", "teacher", teacher.id,
               {"count": len(removed), "student_ids": removed})
     db.commit()
     return schemas.GroupMembershipOut(success_count=len(removed))
+
+
+# ---------- 子分组（0.3.2 F1：教师私有，用于收窄发布受众）----------
+
+def _subgroup_member_snapshot(db: Session, subgroups: list[TeacherSubgroup],
+                              roster_ids: set[int]) -> dict[int, list[int]]:
+    """一次联查得到 {subgroup_id: [student_id]}，只保留仍在当前名单口径内的成员。"""
+    ids = [s.id for s in subgroups]
+    if not ids:
+        return {}
+    rows = db.execute(
+        select(TeacherSubgroupMember.subgroup_id, TeacherSubgroupMember.student_id)
+        .where(TeacherSubgroupMember.subgroup_id.in_(ids))
+        .order_by(TeacherSubgroupMember.student_id)
+    ).all()
+    members: dict[int, list[int]] = {}
+    for subgroup_id, student_id in rows:
+        if student_id in roster_ids:
+            members.setdefault(subgroup_id, []).append(student_id)
+    return members
+
+
+def _subgroup_out(subgroup: TeacherSubgroup, member_ids: list[int]) -> schemas.SubgroupOut:
+    return schemas.SubgroupOut(
+        id=subgroup.id,
+        name=subgroup.name,
+        created_at=subgroup.created_at,
+        member_count=len(member_ids),
+        student_ids=member_ids,
+    )
+
+
+@router.get("/subgroups", response_model=list[schemas.SubgroupOut])
+def list_subgroups(db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """我的子分组 + 成员（成员按当前名单口径过滤：组别被撤销的学生自动不再计入）。"""
+    subgroups = db.execute(
+        select(TeacherSubgroup).where(TeacherSubgroup.teacher_id == teacher.id)
+        .order_by(TeacherSubgroup.name, TeacherSubgroup.id)
+    ).scalars().all()
+    members = _subgroup_member_snapshot(db, subgroups, stats.bound_student_ids(db, teacher.id))
+    return [_subgroup_out(s, members.get(s.id, [])) for s in subgroups]
+
+
+def _validate_subgroup_name(db: Session, teacher_id: int, name: str,
+                            exclude_id: int | None = None) -> str:
+    cleaned = (name or "").strip()
+    if not cleaned:
+        raise APIError(422, "VALIDATION_ERROR", "子分组名称不能为空")
+    if len(cleaned) > 50:
+        raise APIError(422, "SUBGROUP_NAME_INVALID", "子分组名称超长")
+    stmt = select(TeacherSubgroup).where(
+        TeacherSubgroup.teacher_id == teacher_id, TeacherSubgroup.name == cleaned
+    )
+    if exclude_id is not None:
+        stmt = stmt.where(TeacherSubgroup.id != exclude_id)
+    if db.execute(stmt).scalar_one_or_none() is not None:
+        raise APIError(409, "SUBGROUP_NAME_EXISTS", "子分组名称已存在")
+    return cleaned
+
+
+@router.post("/subgroups", response_model=schemas.SubgroupOut)
+def create_subgroup(body: schemas.SubgroupCreate,
+                    db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    name = _validate_subgroup_name(db, teacher.id, body.name)
+    subgroup = TeacherSubgroup(teacher_id=teacher.id, name=name)
+    db.add(subgroup)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise APIError(409, "SUBGROUP_NAME_EXISTS", "子分组名称已存在")
+    log_audit(db, teacher, "subgroup_create", "subgroup", subgroup.id, {"name": name})
+    db.commit()
+    db.refresh(subgroup)
+    return _subgroup_out(subgroup, [])
+
+
+@router.patch("/subgroups/{subgroup_id}", response_model=schemas.SubgroupOut)
+def update_subgroup(subgroup_id: int, body: schemas.SubgroupUpdate,
+                    db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    subgroup = groups_svc.require_owned_subgroup(db, teacher.id, subgroup_id)
+    name = _validate_subgroup_name(db, teacher.id, body.name, exclude_id=subgroup.id)
+    old_name = subgroup.name
+    subgroup.name = name
+    log_audit(db, teacher, "subgroup_update", "subgroup", subgroup.id,
+              {"old_name": old_name, "new_name": name})
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise APIError(409, "SUBGROUP_NAME_EXISTS", "子分组名称已存在")
+    db.refresh(subgroup)
+    members = _subgroup_member_snapshot(db, [subgroup], stats.bound_student_ids(db, teacher.id))
+    return _subgroup_out(subgroup, members.get(subgroup.id, []))
+
+
+@router.delete("/subgroups/{subgroup_id}")
+def delete_subgroup(subgroup_id: int,
+                    db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """删除保护：被任何场次引用 → 409 SUBGROUP_IN_USE（绝不把受众放宽到全部名单）。"""
+    subgroup = groups_svc.require_owned_subgroup(db, teacher.id, subgroup_id)
+    referenced = groups_svc.assignments_using_subgroup(db, subgroup.id)
+    if referenced:
+        titles = "、".join(f"「{a.title}」" for a in referenced[:3])
+        suffix = f" 等 {len(referenced)} 个场次" if len(referenced) > 3 else ""
+        raise APIError(409, "SUBGROUP_IN_USE",
+                       f"子分组「{subgroup.name}」已被场次 {titles}{suffix} 引用，无法删除")
+    log_audit(db, teacher, "subgroup_delete", "subgroup", subgroup.id, {"name": subgroup.name})
+    # 显式清成员关系，不依赖连接的 foreign_keys 开关
+    db.query(TeacherSubgroupMember).filter(
+        TeacherSubgroupMember.subgroup_id == subgroup.id
+    ).delete(synchronize_session=False)
+    db.delete(subgroup)
+    db.commit()
+    return {"ok": True}
+
+
+@router.put("/subgroups/{subgroup_id}/students", response_model=schemas.SubgroupOut)
+def replace_subgroup_students(subgroup_id: int, body: schemas.SubgroupStudentsRequest,
+                              db: Session = Depends(get_db),
+                              teacher: User = Depends(require_teacher)):
+    """全量替换子分组成员（空列表 = 清空）；任一 id 不在当前名单口径内 → 整批 422。"""
+    subgroup = groups_svc.require_owned_subgroup(db, teacher.id, subgroup_id)
+    student_ids = list(dict.fromkeys(body.student_ids))
+    if student_ids:
+        roster_ids = stats.bound_student_ids(db, teacher.id)
+        if not set(student_ids) <= roster_ids:
+            raise APIError(422, "INVALID_STUDENT_IDS", "存在不在当前名单里的学生")
+    added, removed = groups_svc.replace_subgroup_members(db, subgroup.id, student_ids)
+    log_audit(db, teacher, "subgroup_member_change", "subgroup", subgroup.id,
+              {"student_ids": sorted(student_ids), "added": added, "removed": removed})
+    db.commit()
+    return _subgroup_out(subgroup, sorted(student_ids))
+
+
+# ---------- 教师端一次性提示（组别被管理员撤销）----------
+
+def _load_notice_payload(raw: str | None) -> dict | None:
+    """payload 是自由 JSON 文本：解析不出来就当没有（脏数据不影响教师端登录）。"""
+    if not raw:
+        return None
+    try:
+        parsed = json.loads(raw)
+    except ValueError:
+        return None
+    return parsed if isinstance(parsed, dict) else None
+
+
+@router.get("/notices/pending", response_model=list[schemas.TeacherNoticeOut])
+def list_pending_notices(db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    rows = db.execute(
+        select(TeacherNotice)
+        .where(TeacherNotice.teacher_id == teacher.id, TeacherNotice.dismissed_at.is_(None))
+        .order_by(TeacherNotice.id)
+    ).scalars().all()
+    return [
+        schemas.TeacherNoticeOut(
+            id=row.id,
+            kind=row.kind,
+            payload=_load_notice_payload(row.payload),
+            created_at=row.created_at,
+        )
+        for row in rows
+    ]
+
+
+@router.post("/notices/{notice_id}/dismiss")
+def dismiss_notice(notice_id: int,
+                   db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    notice = db.get(TeacherNotice, notice_id)
+    if notice is None or notice.teacher_id != teacher.id:
+        raise APIError(404, "NOTICE_NOT_FOUND", "提示不存在")
+    if notice.dismissed_at is None:
+        notice.dismissed_at = utcnow_str()
+        db.commit()
+    return {"ok": True}

@@ -10,8 +10,10 @@ from .. import schemas
 from ..core import config
 from ..core.db import get_db
 from ..core.security import APIError, require_student
-from ..models import (Assignment, AssignmentProblem, Problem, Submission,
-                      SubmissionResult, TeacherStudent, TestCase, User)
+from ..models import (Assignment, AssignmentProblem, GroupMember, Problem,
+                      Submission, SubmissionResult, TeacherGroup, TeacherStudent,
+                      TestCase, User)
+from ..services import groups as groups_svc
 from ..services import scoring, stats, visibility
 
 router = APIRouter()
@@ -84,21 +86,34 @@ def _assignment_state(assignment: Assignment, now_s: str) -> str:
     return "ending" if assignment.end_time <= cutoff else "ongoing"
 
 
-def _bound_teacher_ids(db: Session, student: User):
-    return select(TeacherStudent.teacher_id).where(TeacherStudent.student_id == student.id)
+def _audience_teacher_ids(db: Session, student: User):
+    """候选教师：手动把我列入名单的 + 可教组别含我的（名单并集的两条来源）。
+
+    真正的可见性判据是 `_in_audience`（逐场次解析受众），这里只是先缩小扫描范围。
+    """
+    manual = select(TeacherStudent.teacher_id).where(TeacherStudent.student_id == student.id)
+    derived = (
+        select(TeacherGroup.teacher_id)
+        .join(GroupMember, GroupMember.group_id == TeacherGroup.group_id)
+        .where(GroupMember.student_id == student.id)
+    )
+    return manual.union(derived)
+
+
+def _in_audience(db: Session, student: User, assignment: Assignment) -> bool:
+    """0.3.2 F1：可见性 = 「我在该场次的受众里」，与发布者的名单口径一致。
+
+    受众来自 `groups.audience_students`（可教组并集 ∪ 手动添加；'subgroup' 时再按白名单收窄），
+    故组别被撤销 / 学生被移出子分组后，学生端立即看不到该场次。
+    """
+    return any(s.id == student.id for s in groups_svc.audience_students(db, assignment))
 
 
 def _get_audience_assignment(db: Session, student: User, assignment_id: int) -> Assignment:
     assignment = db.get(Assignment, assignment_id)
     if assignment is None:
         raise APIError(404, "ASSIGNMENT_NOT_FOUND", "场次不存在")
-    bound = db.scalar(
-        select(TeacherStudent.teacher_id).where(
-            TeacherStudent.student_id == student.id,
-            TeacherStudent.teacher_id == assignment.created_by,
-        )
-    )
-    if bound is None:
+    if not _in_audience(db, student, assignment):
         raise APIError(404, "ASSIGNMENT_NOT_FOUND", "场次不存在")
     return assignment
 
@@ -157,12 +172,13 @@ def list_assignments(db: Session = Depends(get_db), student: User = Depends(requ
     rows = db.execute(
         select(Assignment)
         .where(
-            Assignment.created_by.in_(_bound_teacher_ids(db, student)),
+            Assignment.created_by.in_(_audience_teacher_ids(db, student)),
             Assignment.start_time <= now_s,
         )
         .order_by(Assignment.start_time.desc(), Assignment.id.desc())
     ).scalars().all()
-    return [_student_assignment_out(db, student, a) for a in rows]
+    # 逐场次解析受众：'subgroup' 场次只对白名单里的学生可见（班级量级，无需物化）
+    return [_student_assignment_out(db, student, a) for a in rows if _in_audience(db, student, a)]
 
 
 @router.get("/assignments/{assignment_id}", response_model=schemas.StudentAssignmentOut)
