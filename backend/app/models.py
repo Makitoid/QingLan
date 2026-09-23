@@ -200,5 +200,9 @@ class SiteSetting(Base):
     bg_image_path_dark = Column(Text)
     bg_dual = Column(Integer, nullable=False, server_default=text("0"))
     bg_opacity = Column(Float, nullable=False, server_default=text("0.15"))
+    # 审计总开关（0.3.2 F5）；关闭只停写新日志，历史日志保留
+    audit_enabled = Column(Integer, nullable=False, server_default=text("1"))
+    # 审计保留天数（0.3.2 F5）；NULL = 永久保存，清理任务跳过
+    audit_retention_days = Column(Integer)
     updated_by = Column(Integer, ForeignKey("users.id"))
     updated_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))
