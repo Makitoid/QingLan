@@ -37,6 +37,13 @@ export interface SiteSettings {
   bg_image_url_dark: string | null;
   bg_dual: boolean;
   bg_opacity: number;
+  /** 0.3.2 F5：审计总开关；false 时隐藏审计导航并拦截路由，仅此一个布尔下发给匿名访客。 */
+  audit_enabled: boolean;
+}
+
+/** admin 端设置视图：比公开 DTO 多一个保留天数（NULL = 永久保存）。 */
+export interface AdminSettings extends SiteSettings {
+  audit_retention_days: number | null;
 }
 
 /* ---------- groups（学生分组 / 班级，全站共享，管理员维护） ---------- */
@@ -126,7 +133,10 @@ export interface AuditLogItem {
   actor_id: number | null;
   actor_name: string;
   action: string;
+  /** 动作中文名由服务端随行下发（0.3.2 F5），前端不再维护第二份字典。 */
+  action_label: string;
   target_type: string;
+  target_label: string;
   target_id: number | null;
   /** 后端存 JSON 文本，出接口时已解成对象；无明细为 null。 */
   detail: Record<string, unknown> | null;

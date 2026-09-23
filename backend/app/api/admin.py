@@ -16,10 +16,11 @@ import json
 import re
 import uuid
 from datetime import datetime, timezone
+from io import BytesIO
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -33,9 +34,9 @@ from ..core.security import (APIError, generate_temp_password,
                              utcnow_str)
 from ..models import (AuditLog, Group, GroupMember, SiteSetting, TeacherGroup,
                       TeacherNotice, User)
-from ..schemas import (AccountCreate, AuditLogOut, AuditLogPageOut, BatchActiveRequest,
-                       BatchResetPasswordRequest, BatchResetResultOut, GroupCreate,
-                       GroupMembershipOut, GroupMembersRequest, GroupOut, GroupRef,
+from ..schemas import (AccountCreate, AdminSettingsOut, AuditLogOut, AuditLogPageOut,
+                       BatchActiveRequest, BatchResetPasswordRequest, BatchResetResultOut,
+                       GroupCreate, GroupMembershipOut, GroupMembersRequest, GroupOut, GroupRef,
                        GroupUpdate, ImportFailure, ImportResult, IsActivePatch,
                        RosterEntryOut, SettingsOut, SettingsUpdate, StudentOut,
                        TeacherGroupsOut, TeacherGroupsRequest, TeacherOut,
@@ -43,7 +44,10 @@ from ..schemas import (AccountCreate, AuditLogOut, AuditLogPageOut, BatchActiveR
 from ..services import export as export_svc
 from ..services import groups as groups_svc
 from ..services import stats
-from ..services.audit import log_audit
+from ..services.audit import (AUDIT_EXPORT_MAX_ROWS, AUDIT_RETENTION_MAX_DAYS,
+                              AUDIT_RETENTION_MIN_DAYS, action_label, audit_enabled,
+                              build_audit_logs_xlsx, invalidate_audit_cache, log_audit,
+                              prune_expired, retention_cutoff, target_label)
 
 router = APIRouter()
 
@@ -190,6 +194,14 @@ def settings_to_out(s: SiteSetting) -> SettingsOut:
         bg_image_url_dark=bg_image_url(s.bg_image_path_dark, "dark") if s.bg_image_path_dark else None,
         bg_dual=bool(s.bg_dual),
         bg_opacity=s.bg_opacity,
+        audit_enabled=bool(s.audit_enabled),
+    )
+
+
+def admin_settings_to_out(s: SiteSetting) -> AdminSettingsOut:
+    return AdminSettingsOut(
+        **settings_to_out(s).model_dump(),
+        audit_retention_days=s.audit_retention_days,
     )
 
 
@@ -681,11 +693,34 @@ def audit_row_to_out(row: AuditLog, actor_names: dict[int, str]) -> AuditLogOut:
         actor_id=row.actor_id,
         actor_name=actor_names.get(row.actor_id, "") if row.actor_id is not None else "",
         action=row.action,
+        action_label=action_label(row.action),
         target_type=row.target_type,
+        target_label=target_label(row.target_type),
         target_id=row.target_id,
         detail=detail if isinstance(detail, dict) else None,
         created_at=row.created_at,
     )
+
+
+def audit_conditions(action: str | None, target_type: str | None,
+                     start: str | None = None, end: str | None = None) -> list:
+    conditions = []
+    if action:
+        conditions.append(AuditLog.action == action)
+    if target_type:
+        conditions.append(AuditLog.target_type == target_type)
+    if start:
+        conditions.append(AuditLog.created_at >= start)
+    if end:
+        conditions.append(AuditLog.created_at <= end)
+    return conditions
+
+
+def audit_actors(db: Session, rows) -> dict[int, User]:
+    actor_ids = {row.actor_id for row in rows if row.actor_id is not None}
+    if not actor_ids:
+        return {}
+    return {u.id: u for u in db.query(User).filter(User.id.in_(actor_ids)).all()}
 
 
 @router.get("/admin/audit_logs", response_model=AuditLogPageOut)
@@ -693,24 +728,56 @@ def list_audit_logs(action: str | None = None, target_type: str | None = None,
                     limit: int = Query(default=50, ge=0, le=200),
                     offset: int = Query(default=0, ge=0),
                     db: Session = Depends(get_db), _: User = Depends(require_admin)):
-    stmt = select(AuditLog)
-    count_stmt = select(func.count(AuditLog.id))
-    if action:
-        stmt = stmt.where(AuditLog.action == action)
-        count_stmt = count_stmt.where(AuditLog.action == action)
-    if target_type:
-        stmt = stmt.where(AuditLog.target_type == target_type)
-        count_stmt = count_stmt.where(AuditLog.target_type == target_type)
-    total = db.scalar(count_stmt) or 0
+    if not audit_enabled(db):
+        raise APIError(403, "AUDIT_DISABLED", "审计功能已关闭，无法查看审计日志")
+    conditions = audit_conditions(action, target_type)
+    total = db.scalar(select(func.count(AuditLog.id)).where(*conditions)) or 0
     rows = db.execute(
-        stmt.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit).offset(offset)
+        select(AuditLog).where(*conditions)
+        .order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit).offset(offset)
     ).scalars().all()
-    actor_names = {}
-    actor_ids = {row.actor_id for row in rows if row.actor_id is not None}
-    if actor_ids:
-        for u in db.query(User).filter(User.id.in_(actor_ids)).all():
-            actor_names[u.id] = f"{u.display_name}({u.username})"
+    actors = audit_actors(db, rows)
+    actor_names = {i: f"{u.display_name}({u.username})" for i, u in actors.items()}
     return AuditLogPageOut(items=[audit_row_to_out(r, actor_names) for r in rows], total=total)
+
+
+@router.get("/admin/audit_logs/export")
+def export_audit_logs(action: str | None = None, target_type: str | None = None,
+                      start: str | None = None, end: str | None = None,
+                      db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    """导出审计台账 xlsx（0.3.2 F5）：与列表同筛选口径，另加保留期下界。"""
+    conditions = audit_conditions(action, target_type, start, end)
+    cutoff = retention_cutoff(db)
+    if cutoff is not None:
+        conditions.append(AuditLog.created_at >= cutoff)
+    total = db.scalar(select(func.count(AuditLog.id)).where(*conditions)) or 0
+    if total > AUDIT_EXPORT_MAX_ROWS:
+        raise APIError(
+            422, "AUDIT_EXPORT_TOO_LARGE",
+            f"导出结果 {total} 条，超过 {AUDIT_EXPORT_MAX_ROWS} 条上限，请先按动作、对象类型或时间范围筛选",
+        )
+    rows = db.execute(
+        select(AuditLog).where(*conditions).order_by(AuditLog.created_at, AuditLog.id)
+    ).scalars().all()
+    actors = audit_actors(db, rows)
+    payload = build_audit_logs_xlsx([
+        {
+            "created_at": row.created_at,
+            "actor_name": actors[row.actor_id].display_name if row.actor_id in actors else "",
+            "actor_username": actors[row.actor_id].username if row.actor_id in actors else "",
+            "action": row.action,
+            "target_type": row.target_type,
+            "target_id": row.target_id,
+            "detail": row.detail,
+        }
+        for row in rows
+    ])
+    filename = f"审计日志-{datetime.now(timezone.utc).strftime('%Y%m%d%H%M%S')}.xlsx"
+    return StreamingResponse(
+        BytesIO(payload),
+        media_type=export_svc.XLSX_MEDIA_TYPE,
+        headers=export_svc.attachment_headers(filename),
+    )
 
 
 # ---------- 学生批量操作（仅 admin；密码能力只存在于 admin 端）----------
@@ -803,12 +870,25 @@ def get_bg_image(v: str | None = None, mode: str = "light", db: Session = Depend
     return FileResponse(path, headers={"Cache-Control": cache})
 
 
-@router.put("/admin/settings", response_model=SettingsOut)
+@router.get("/admin/settings", response_model=AdminSettingsOut)
+def get_admin_settings(db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    return admin_settings_to_out(get_or_create_settings(db))
+
+
+@router.put("/admin/settings", response_model=AdminSettingsOut)
 def update_settings(body: SettingsUpdate, db: Session = Depends(get_db), admin: User = Depends(require_admin)):
     if body.brand_color is not None and not HEX_COLOR_RE.match(body.brand_color):
         raise APIError(422, "INVALID_BRAND_COLOR", "主题色格式无效，应为 #RRGGBB")
     if body.brand_color_dark is not None and not HEX_COLOR_RE.match(body.brand_color_dark):
         raise APIError(422, "INVALID_BRAND_COLOR", "暗色主题色格式无效，应为 #RRGGBB")
+    retention_dirty = "audit_retention_days" in body.model_fields_set
+    if retention_dirty and body.audit_retention_days is not None and not (
+        AUDIT_RETENTION_MIN_DAYS <= body.audit_retention_days <= AUDIT_RETENTION_MAX_DAYS
+    ):
+        raise APIError(
+            422, "AUDIT_RETENTION_INVALID",
+            f"审计保留天数需在 {AUDIT_RETENTION_MIN_DAYS}–{AUDIT_RETENTION_MAX_DAYS} 之间，留空表示永久保存",
+        )
     s = get_or_create_settings(db)
     if body.brand_color is not None:
         s.brand_color = body.brand_color
@@ -820,11 +900,18 @@ def update_settings(body: SettingsUpdate, db: Session = Depends(get_db), admin: 
         s.bg_dual = 1 if body.bg_dual else 0
     if body.bg_opacity is not None:
         s.bg_opacity = body.bg_opacity
+    if body.audit_enabled is not None:
+        s.audit_enabled = 1 if body.audit_enabled else 0
+    if retention_dirty:
+        s.audit_retention_days = body.audit_retention_days
     s.updated_by = admin.id
     s.updated_at = now_str()
+    invalidate_audit_cache()
+    if retention_dirty:
+        prune_expired(db)
     db.commit()
     db.refresh(s)
-    return settings_to_out(s)
+    return admin_settings_to_out(s)
 
 
 @router.post("/admin/settings/bg_image", response_model=BgImageOut)

@@ -202,7 +202,9 @@ class AuditLogOut(BaseModel):
     actor_id: int | None
     actor_name: str = ""
     action: str
+    action_label: str
     target_type: str
+    target_label: str
     target_id: int | None
     detail: dict | None = None
     created_at: str
@@ -243,6 +245,11 @@ class SettingsOut(BaseModel):
     bg_image_url_dark: str | None
     bg_dual: bool
     bg_opacity: float
+    audit_enabled: bool = True
+
+
+class AdminSettingsOut(SettingsOut):
+    audit_retention_days: int | None = None
 
 
 class SettingsUpdate(BaseModel):
@@ -251,6 +258,8 @@ class SettingsUpdate(BaseModel):
     brand_color_source: Literal["manual", "image"] | None = None
     bg_dual: bool | None = None
     bg_opacity: float | None = Field(default=None, ge=0, le=1)
+    audit_enabled: bool | None = None
+    audit_retention_days: int | None = None
 
 
 class PasswordChangeRequest(BaseModel):

@@ -3,6 +3,7 @@ import { downloadBlob, request } from './client';
 import type {
   LoginResponse,
   SiteSettings,
+  AdminSettings,
   BrandColorSource,
   BgMode,
   User,
@@ -80,14 +81,20 @@ export function getSettings(): Promise<SiteSettings> {
   return request<SiteSettings>('/settings', { anonymous: true });
 }
 
+export function getAdminSettings(): Promise<AdminSettings> {
+  return request<AdminSettings>('/admin/settings');
+}
+
 export function updateSettings(body: {
   brand_color?: string;
   brand_color_dark?: string;
   brand_color_source?: BrandColorSource;
   bg_dual?: boolean;
   bg_opacity?: number;
-}): Promise<SiteSettings> {
-  return request<SiteSettings>('/admin/settings', { method: 'PUT', body });
+  audit_enabled?: boolean;
+  audit_retention_days?: number | null;
+}): Promise<AdminSettings> {
+  return request<AdminSettings>('/admin/settings', { method: 'PUT', body });
 }
 
 export function uploadBgImage(file: File | Blob, mode: BgMode = 'light'): Promise<{ url: string }> {
@@ -236,6 +243,27 @@ export function listAuditLogs(params: {
       limit: params.limit,
       offset: params.offset,
     })}`,
+  );
+}
+
+/**
+ * 导出审计台账 xlsx（0.3.2 F5）。
+ * 走 `downloadBlob` 手动带 JWT —— `<a href>` 直链带不上 Authorization 头。
+ */
+export function exportAuditLogs(params: {
+  action?: string;
+  targetType?: string;
+  start?: string;
+  end?: string;
+}): Promise<void> {
+  return downloadBlob(
+    `/admin/audit_logs/export${queryString({
+      action: params.action?.trim(),
+      target_type: params.targetType?.trim(),
+      start: params.start?.trim(),
+      end: params.end?.trim(),
+    })}`,
+    '审计日志.xlsx',
   );
 }
 

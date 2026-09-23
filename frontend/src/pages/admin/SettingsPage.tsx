@@ -1,5 +1,6 @@
 import { useTheme } from '../../appTheme';
 import { useEffect, useRef, useState } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
 import {
   Button,
   Caption1,
@@ -16,12 +17,13 @@ import {
   MessageBar,
   MessageBarBody,
   Slider,
+  SpinButton,
   Switch,
   Text,
   tokens,
 } from '@fluentui/react-components';
-import { ArrowDownload24Regular, Delete24Regular, ImageAdd24Regular, Save24Regular } from '@fluentui/react-icons';
-import { deleteBgImage, updateSettings, uploadBgImage } from '../../api';
+import { ArrowDownload24Regular, Delete24Regular, History24Regular, ImageAdd24Regular, Save24Regular } from '@fluentui/react-icons';
+import { deleteBgImage, getAdminSettings, updateSettings, uploadBgImage } from '../../api';
 import type { BgMode } from '../../api/types';
 import { useSettings } from '../../context';
 import { ErrorView, errMessage } from '../../components/StateViews';
@@ -41,6 +43,10 @@ const switchIndicator = { style: { marginLeft: 0 } };
 
 /** 撤销取色时要回写的槽位；空值（暗色尚未单独设置过）不生成撤销项。 */
 type ColorUndo = { mode: BgMode; color: string }[];
+
+const RETENTION_MIN = 1;
+const RETENTION_MAX = 3650;
+const RETENTION_HINT = `留空 = 永久保存；填 ${RETENTION_MIN}–${RETENTION_MAX} 天则自动清理超期日志`;
 
 const undoEntry = (previous: string, mode: BgMode): ColorUndo =>
   /^#[0-9a-fA-F]{6}$/.test(previous) ? [{ mode, color: previous }] : [];
@@ -124,6 +130,8 @@ function BgSlot({ label, url, disabled, onSelect, onClear }: SlotProps) {
 
 export function AdminSettingsPage() {
   const t = useTheme();
+  const navigate = useNavigate();
+  const location = useLocation();
   const { settings, effective, setPreview, reload } = useSettings();
 
   const [brandColor, setBrandColor] = useState(settings?.brand_color ?? '');
@@ -131,6 +139,9 @@ export function AdminSettingsPage() {
   const [bgOpacity, setBgOpacity] = useState(settings?.bg_opacity ?? 0.15);
   const [bgDual, setBgDual] = useState(settings?.bg_dual ?? false);
   const [colorFromImage, setColorFromImage] = useState(settings?.brand_color_source === 'image');
+  const [auditEnabled, setAuditEnabled] = useState(true);
+  const [retentionDays, setRetentionDays] = useState<number | null>(null);
+  const [auditLoading, setAuditLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [compressing, setCompressing] = useState(false);
   const [message, setMessage] = useState<{ intent: 'success' | 'error' | 'info'; text: string; undo?: ColorUndo } | null>(null);
@@ -147,6 +158,32 @@ export function AdminSettingsPage() {
       setColorFromImage(settings.brand_color_source === 'image');
     }
   }, [settings]);
+
+  useEffect(() => {
+    let cancelled = false;
+    getAdminSettings()
+      .then((admin) => {
+        if (cancelled) return;
+        setAuditEnabled(admin.audit_enabled);
+        setRetentionDays(admin.audit_retention_days);
+      })
+      .catch((err) => {
+        if (!cancelled) setMessage({ intent: 'error', text: errMessage(err) });
+      })
+      .finally(() => {
+        if (!cancelled) setAuditLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const notice = (location.state as { auditNotice?: string } | null)?.auditNotice;
+    if (!notice) return;
+    setMessage({ intent: 'info', text: notice });
+    navigate(location.pathname, { replace: true, state: null });
+  }, [location, navigate]);
 
   useEffect(() => {
     if (brandColor) setPreview({ brand_color: brandColor });
@@ -325,16 +362,24 @@ export function AdminSettingsPage() {
   };
 
   const handleSave = async () => {
+    if (retentionDays !== null && (!Number.isInteger(retentionDays) || retentionDays < RETENTION_MIN || retentionDays > RETENTION_MAX)) {
+      setMessage({ intent: 'error', text: `审计保留天数需为 ${RETENTION_MIN}–${RETENTION_MAX} 之间的整数，留空表示永久保存` });
+      return;
+    }
     setBusy(true);
     setMessage(null);
     try {
-      await updateSettings({
+      const next = await updateSettings({
         brand_color: brandColor,
         brand_color_dark: brandColorDark || undefined,
         brand_color_source: colorFromImage ? 'image' : 'manual',
         bg_dual: bgDual,
         bg_opacity: bgOpacity,
+        audit_enabled: auditEnabled,
+        audit_retention_days: retentionDays,
       });
+      setAuditEnabled(next.audit_enabled);
+      setRetentionDays(next.audit_retention_days);
       await reload();
       setMessage({ intent: 'success', text: '设置已保存，其他用户下次加载时生效' });
     } catch (err) {
@@ -356,7 +401,7 @@ export function AdminSettingsPage() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL }}>
       <PageHeader
-        title="主题设置"
+        title="系统设置"
         subtitle="修改会即时全站预览；点击「保存」后写入数据库，其他用户下次加载时生效。"
       />
 
@@ -480,8 +525,38 @@ export function AdminSettingsPage() {
         </div>
       </Card>
 
+      <Card size="medium">
+        <CardHeader header={<Text weight="semibold">审计日志</Text>} />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
+          <Switch
+            checked={auditEnabled}
+            disabled={busy || auditLoading}
+            label="启用审计"
+            indicator={switchIndicator}
+            onChange={(_, data) => setAuditEnabled(data.checked)}
+          />
+          <Field label="保留天数" hint={RETENTION_HINT} style={{ maxWidth: '360px' }}>
+            <SpinButton
+              value={retentionDays}
+              min={RETENTION_MIN}
+              max={RETENTION_MAX}
+              disabled={busy || auditLoading}
+              onChange={(_, data) => setRetentionDays(data.value ?? null)}
+            />
+          </Field>
+          <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+            关闭审计只停止写入新日志，已有记录不会被删除；重新开启后历史日志照常可见。填写保留天数后，超过该天数的日志会在应用启动、保存本页设置或下一次写入审计时自动清理；留空则永久保存。审计日志仅管理员可见、只读，不提供修改或删除入口。
+          </Caption1>
+          <div>
+            <Button appearance="secondary" icon={<History24Regular />} onClick={() => navigate('/admin/audit')}>
+              查看审计日志
+            </Button>
+          </div>
+        </div>
+      </Card>
+
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <Button appearance="primary" size="large" icon={<Save24Regular />} onClick={handleSave} disabled={busy}>
+        <Button appearance="primary" size="large" icon={<Save24Regular />} onClick={handleSave} disabled={busy || auditLoading}>
           {busy ? '保存中…' : '保存设置'}
         </Button>
       </div>

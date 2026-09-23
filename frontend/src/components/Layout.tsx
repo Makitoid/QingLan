@@ -34,9 +34,11 @@ const NAV_LINKS: Record<Role, { to: string; label: string }[]> = {
     { to: '/admin/teachers', label: '教师管理' },
     { to: '/admin/students', label: '学生管理' },
     { to: '/admin/audit', label: '审计日志' },
-    { to: '/admin/settings', label: '主题设置' },
+    { to: '/admin/settings', label: '系统设置' },
   ],
 };
+
+const AUDIT_PATH = '/admin/audit';
 
 export function Layout() {
   const t = useTheme();
@@ -58,7 +60,9 @@ export function Layout() {
     root.style.setProperty('--ql-selection', chroma(t.colorBrandBackground).alpha(0.28).css());
   }, [acrylicBg, t.colorBrandBackground]);
 
-  const links = user && !mustChange ? NAV_LINKS[user.role] : [];
+  const links = user && !mustChange
+    ? NAV_LINKS[user.role].filter((link) => !(link.to === AUDIT_PATH && effective?.audit_enabled === false))
+    : [];
   const selectedTab =
     links.find((link) => location.pathname === link.to || location.pathname.startsWith(`${link.to}/`))?.to ?? '';
 

@@ -1,4 +1,5 @@
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -6,9 +7,23 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import admin, auth, student, teacher
+from .core.db import SessionLocal
 from .core.security import APIError
+from .services.audit import prune_expired
 
-app = FastAPI(title="青蓝 QingLan API", version="1.0")
+
+@asynccontextmanager
+async def lifespan(_: FastAPI):
+    db = SessionLocal()
+    try:
+        prune_expired(db)
+        db.commit()
+    finally:
+        db.close()
+    yield
+
+
+app = FastAPI(title="青蓝 QingLan API", version="1.0", lifespan=lifespan)
 
 
 @app.exception_handler(APIError)

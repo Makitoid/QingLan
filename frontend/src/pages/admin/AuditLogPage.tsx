@@ -20,8 +20,8 @@ import {
   tokens,
   type TableColumnDefinition,
 } from '@fluentui/react-components';
-import { ArrowSync24Regular, ChevronDown24Regular } from '@fluentui/react-icons';
-import { listAuditLogs } from '../../api';
+import { ArrowExportUp24Regular, ArrowSync24Regular, ChevronDown24Regular } from '@fluentui/react-icons';
+import { exportAuditLogs, listAuditLogs } from '../../api';
 import type { AuditLogItem } from '../../api/types';
 import { EmptyView, ErrorView, errMessage } from '../../components/StateViews';
 import { PageHeader } from '../../components/PageHeader';
@@ -30,38 +30,38 @@ import { fmtTimeWithSeconds } from '../../components/time';
 /** 每页条数；`limit/offset` 分页，`total` 决定「加载更多」是否还可用（AU-05）。 */
 const PAGE_SIZE = 50;
 
-const ACTION_LABELS: Record<string, string> = {
-  student_create_pw: '新建学生（发放初始密码）',
-  student_reset_pw: '重置学生密码',
-  student_batch_reset_pw: '批量重置学生密码',
-  teacher_create_pw: '新建教师（发放初始密码）',
-  teacher_reset_pw: '重置教师密码',
-  user_change_password: '用户修改密码',
-  user_is_active_change: '账号停用/启用',
-  group_member_change: '组成员变更',
-  group_update: '分组改名',
-  group_delete: '删除分组',
-  group_create: '新建分组',
-  teacher_group_assign: '教师可教组别分配',
-  teacher_student_bind: '教师拉入学生',
-  teacher_student_unbind: '教师移出学生',
-  student_import: '批量导入学生',
-  score_manual_adjust: '成绩手动调分',
-};
+/**
+ * 下拉候选的「已知动作 / 对象类型」清单（《修改意见》附录 A）。
+ * 中文名一律取服务端下发的 action_label / target_label，本文件不再维护第二份字典。
+ */
+const KNOWN_ACTIONS = [
+  'student_create_pw',
+  'student_reset_pw',
+  'student_batch_reset_pw',
+  'teacher_create_pw',
+  'teacher_reset_pw',
+  'user_change_password',
+  'user_is_active_change',
+  'group_create',
+  'group_update',
+  'group_delete',
+  'group_member_change',
+  'teacher_group_assign',
+  'teacher_student_bind',
+  'teacher_student_unbind',
+  'subgroup_create',
+  'subgroup_update',
+  'subgroup_delete',
+  'subgroup_member_change',
+  'student_import',
+  'score_manual_adjust',
+];
 
-const TARGET_LABELS: Record<string, string> = {
-  user: '账号',
-  student: '学生',
-  teacher: '教师',
-  group: '分组',
-  submission: '提交',
-  problem: '题目',
-  assignment: '场次',
-};
+const KNOWN_TARGETS = ['user', 'student', 'teacher', 'group', 'subgroup', 'submission', 'problem', 'assignment'];
 
-/** 下拉候选：《修改意见》附录 A 的必备动作 + 本次已加载数据里出现过的动作（后端新增也不会漏）。 */
-function optionValues(known: Record<string, string>, seen: string[]): string[] {
-  return Array.from(new Set([...Object.keys(known), ...seen])).sort();
+/** 下拉候选 = 已知清单 ∪ 本次已加载数据里出现过的值（后端新增动作也不会漏）。 */
+function optionValues(known: string[], seen: string[]): string[] {
+  return Array.from(new Set([...known, ...seen])).sort();
 }
 
 function formatValue(value: unknown): string {
@@ -150,20 +150,30 @@ export function AuditLogPage() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<unknown | null>(null);
-  const [moreError, setMoreError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
+  const [actionLabels, setActionLabels] = useState<Record<string, string>>({});
+  const [targetLabels, setTargetLabels] = useState<Record<string, string>>({});
+
+  const absorbLabels = (rows: AuditLogItem[]) => {
+    if (rows.length === 0) return;
+    setActionLabels((prev) => ({ ...prev, ...Object.fromEntries(rows.map((r) => [r.action, r.action_label])) }));
+    setTargetLabels((prev) => ({ ...prev, ...Object.fromEntries(rows.map((r) => [r.target_type, r.target_label])) }));
+  };
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    setMoreError(null);
+    setActionError(null);
     listAuditLogs({ action: action || undefined, targetType: targetType || undefined, limit: PAGE_SIZE, offset: 0 })
       .then((page) => {
         if (cancelled) return;
         setItems(page.items);
         setTotal(page.total);
+        absorbLabels(page.items);
       })
       .catch((e) => {
         if (!cancelled) setError(e);
@@ -178,7 +188,7 @@ export function AuditLogPage() {
 
   const loadMore = async () => {
     setLoadingMore(true);
-    setMoreError(null);
+    setActionError(null);
     try {
       const page = await listAuditLogs({
         action: action || undefined,
@@ -192,10 +202,23 @@ export function AuditLogPage() {
         return [...prev, ...page.items.filter((x) => !seen.has(x.id))];
       });
       setTotal(page.total);
+      absorbLabels(page.items);
     } catch (e) {
-      setMoreError(errMessage(e));
+      setActionError(errMessage(e));
     } finally {
       setLoadingMore(false);
+    }
+  };
+
+  const exportXlsx = async () => {
+    setExporting(true);
+    setActionError(null);
+    try {
+      await exportAuditLogs({ action: action || undefined, targetType: targetType || undefined });
+    } catch (e) {
+      setActionError(errMessage(e));
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -214,7 +237,7 @@ export function AuditLogPage() {
               <Caption1 style={{ color: t.colorNeutralForeground3 }}>动作</Caption1>
               <Dropdown
                 placeholder="全部动作"
-                value={action ? (ACTION_LABELS[action] ?? action) : ''}
+                value={action ? (actionLabels[action] ?? action) : ''}
                 selectedOptions={action ? [action] : []}
                 onOptionSelect={(_, d) => setAction(String(d.optionValue ?? ''))}
                 disabled={loading}
@@ -223,9 +246,9 @@ export function AuditLogPage() {
                 <Option value="" text="全部动作">
                   全部动作
                 </Option>
-                {optionValues(ACTION_LABELS, seenActions).map((key) => (
-                  <Option key={key} value={key} text={ACTION_LABELS[key] ?? key}>
-                    {ACTION_LABELS[key] ?? key}
+                {optionValues(KNOWN_ACTIONS, seenActions).map((key) => (
+                  <Option key={key} value={key} text={actionLabels[key] ?? key}>
+                    {actionLabels[key] ?? key}
                   </Option>
                 ))}
               </Dropdown>
@@ -234,7 +257,7 @@ export function AuditLogPage() {
               <Caption1 style={{ color: t.colorNeutralForeground3 }}>对象类型</Caption1>
               <Dropdown
                 placeholder="全部类型"
-                value={targetType ? (TARGET_LABELS[targetType] ?? targetType) : ''}
+                value={targetType ? (targetLabels[targetType] ?? targetType) : ''}
                 selectedOptions={targetType ? [targetType] : []}
                 onOptionSelect={(_, d) => setTargetType(String(d.optionValue ?? ''))}
                 disabled={loading}
@@ -243,9 +266,9 @@ export function AuditLogPage() {
                 <Option value="" text="全部类型">
                   全部类型
                 </Option>
-                {optionValues(TARGET_LABELS, seenTargets).map((key) => (
-                  <Option key={key} value={key} text={TARGET_LABELS[key] ?? key}>
-                    {TARGET_LABELS[key] ?? key}
+                {optionValues(KNOWN_TARGETS, seenTargets).map((key) => (
+                  <Option key={key} value={key} text={targetLabels[key] ?? key}>
+                    {targetLabels[key] ?? key}
                   </Option>
                 ))}
               </Dropdown>
@@ -259,9 +282,24 @@ export function AuditLogPage() {
             >
               刷新
             </Button>
+            <Button
+              appearance="secondary"
+              icon={exporting ? <Spinner size="tiny" /> : <ArrowExportUp24Regular />}
+              disabled={exporting || loading || total === 0}
+              onClick={() => void exportXlsx()}
+              style={{ alignSelf: 'flex-end' }}
+            >
+              {exporting ? '导出中…' : '导出 Excel'}
+            </Button>
           </>
         }
       />
+
+      {actionError && (
+        <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
+          <MessageBarBody>{actionError}</MessageBarBody>
+        </MessageBar>
+      )}
 
       {error ? (
         <ErrorView error={error} onRetry={() => setTick((x) => x + 1)} />
@@ -279,12 +317,6 @@ export function AuditLogPage() {
           <Caption1 style={{ color: t.colorNeutralForeground3 }}>
             共 {total} 条，已加载 {items.length} 条。
           </Caption1>
-
-          {moreError && (
-            <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
-              <MessageBarBody>{moreError}</MessageBarBody>
-            </MessageBar>
-          )}
 
           <DataGrid items={items} columns={columns} focusMode="cell" resizableColumns getRowId={(item) => item.id}>
             <DataGridHeader>
@@ -308,11 +340,11 @@ export function AuditLogPage() {
                       {columnId === 'actor_id' && (item.actor_id === null ? '—' : item.actor_id)}
                       {columnId === 'action' && (
                         <Badge appearance="tint" size="large" style={{ alignSelf: 'flex-start' }}>
-                          {ACTION_LABELS[item.action] ?? item.action}
+                          {item.action_label || item.action}
                         </Badge>
                       )}
                       {columnId === 'target_type' && (
-                        TARGET_LABELS[item.target_type] ?? item.target_type
+                        item.target_label || item.target_type
                       )}
                       {columnId === 'target_id' && (item.target_id === null ? '—' : item.target_id)}
                       {columnId === 'detail' && (

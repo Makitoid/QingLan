@@ -179,7 +179,11 @@ class TestForcedChangeGuard:
 
     def test_anonymous_settings_still_open(self, client, db):
         # 登录页背景/主题色是匿名接口，不能被拦截牵连
-        assert client.get("/api/settings").status_code == 200
+        resp = client.get("/api/settings")
+        assert resp.status_code == 200
+        # 0.3.2 F5：只多给一个布尔开关；保留天数不下发给未认证访客
+        assert resp.json()["audit_enabled"] is True
+        assert "audit_retention_days" not in resp.json()
 
 
 # ---------- 4. PW-03/07 改密接口的错误与副作用 ----------

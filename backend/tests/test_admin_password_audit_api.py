@@ -19,6 +19,7 @@ app/schemas.py）：
 - 审计（AU-02~06）：只追加、只读。``GET /admin/audit_logs?action=&target_type=&limit=&offset=``
   → ``AuditLogPageOut{items[],total}``，按 ``(created_at, id)`` 倒序；``limit`` 允许 0
   （SQLite 语义：不返回行但 total 照给）。``detail`` 是明文 JSON，读出为 dict 或 None。
+  每行另带服务端算好的 ``action_label`` / ``target_label``（0.3.2 F5，中文名单一来源）。
   ``log_audit`` 只 add 不 commit，所以断言前直接查库即可（业务接口自己会 commit）。
 """
 import json
@@ -366,15 +367,21 @@ class TestAuditLogViewer:
         assert set(page) == {"items", "total"}
         assert page["total"] >= 4 and len(page["items"]) <= page["total"]
         for item in page["items"]:
-            assert set(item) == {"id", "actor_id", "actor_name", "action", "target_type",
-                                 "target_id", "detail", "created_at"}
+            assert set(item) == {"id", "actor_id", "actor_name", "action", "action_label",
+                                 "target_type", "target_label", "target_id", "detail",
+                                 "created_at"}
             assert item["action"] and item["target_type"]
             assert item["detail"] is None or isinstance(item["detail"], dict)
             datetime.strptime(item["created_at"], "%Y-%m-%d %H:%M:%S")
         by_action = {i["action"]: i for i in page["items"]}
         assert by_action["student_reset_pw"]["actor_name"] == f"管理员({admin_user.username})"
         assert by_action["student_reset_pw"]["target_id"] == student.id
+        # 0.3.2 F5：中文名由服务端随行下发（单一来源：services.audit 的两张标签表）
+        assert by_action["student_reset_pw"]["action_label"] == "重置学生密码"
+        assert by_action["student_reset_pw"]["target_label"] == "学生"
         assert by_action["teacher_reset_pw"]["target_type"] == "teacher"
+        assert by_action["teacher_reset_pw"]["action_label"] == "重置教师密码"
+        assert by_action["teacher_reset_pw"]["target_label"] == "教师"
         assert by_action["teacher_reset_pw"]["actor_id"] == admin_user.id
         assert by_action["user_is_active_change"]["detail"] == {"is_active": False}
         assert by_action["student_create_pw"]["detail"] == {"must_change_password": True}

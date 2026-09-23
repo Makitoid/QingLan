@@ -44,6 +44,21 @@ function HomeRedirect() {
   return <Navigate to={roleHome(user.role)} replace />;
 }
 
+/** 审计关闭时 /admin/audit 直接送回系统设置（后端同口径 403 AUDIT_DISABLED）。 */
+function AdminAuditRoute() {
+  const { effective } = useSettings();
+  if (effective?.audit_enabled === false) {
+    return (
+      <Navigate
+        to="/admin/settings"
+        replace
+        state={{ auditNotice: '审计功能当前已关闭：不再记录新日志（历史日志仍保留）。可在此页的「审计日志」卡片重新开启。' }}
+      />
+    );
+  }
+  return <AuditLogPage />;
+}
+
 function ThemedApp() {
   const { effective } = useSettings();
   const { isDark } = useThemeMode();
@@ -88,7 +103,7 @@ function ThemedApp() {
                   <Route path="/admin/teachers" element={<AdminTeacherList />} />
                   <Route path="/admin/teachers/:id" element={<AdminTeacherDetail />} />
                   <Route path="/admin/students" element={<AdminStudentList />} />
-                  <Route path="/admin/audit" element={<AuditLogPage />} />
+                  <Route path="/admin/audit" element={<AdminAuditRoute />} />
                   <Route path="/admin/settings" element={<AdminSettingsPage />} />
                 </Route>
                 <Route path="*" element={<NotFoundPage />} />

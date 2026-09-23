@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.db import SessionLocal, engine
 from app.models import (Assignment, AssignmentProblem, Base, Problem,
                         SiteSetting, Submission, TestCase, User)
+from app.services.audit import invalidate_audit_cache
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
@@ -24,6 +25,7 @@ FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 def db():
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
+    invalidate_audit_cache()
     session = SessionLocal()
     session.add(SiteSetting(id=1, brand_color="#0F6CBD", bg_opacity=0.15))
     session.commit()
