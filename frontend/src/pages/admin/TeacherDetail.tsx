@@ -1,5 +1,5 @@
 import { useTheme } from '../../appTheme';
-import { useEffect, useMemo, useState, type ReactElement } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import {
   Badge,
@@ -7,111 +7,46 @@ import {
   Caption1,
   Card,
   CardHeader,
-  createTableColumn,
-  DataGrid,
-  DataGridBody,
-  DataGridCell,
-  DataGridHeader,
-  DataGridHeaderCell,
-  DataGridRow,
+  Combobox,
   Dialog,
   DialogActions,
   DialogBody,
   DialogContent,
   DialogSurface,
   DialogTitle,
+  Listbox,
   MessageBar,
   MessageBarBody,
+  Option,
   SearchBox,
   Spinner,
   Text,
+  Tooltip,
   tokens,
-  type TableColumnDefinition,
 } from '@fluentui/react-components';
 import { Add24Regular, ArrowExit24Regular, Key24Regular, Save24Regular } from '@fluentui/react-icons';
 import {
   getTeacherGroups,
   getTeacherStudents,
   listGroups,
-  listStudents,
   listTeachers,
   putTeacherGroups,
   resetTeacherPassword,
 } from '../../api';
-import type { GroupItem, StudentItem, TeacherGroups, TempCredential } from '../../api/types';
+import type { GroupItem, RosterEntry, TeacherGroups, TempCredential } from '../../api/types';
 import { EmptyView, ErrorView, LoadingView, errMessage } from '../../components/StateViews';
 import { PageHeader } from '../../components/PageHeader';
 import { CredentialDialog } from '../../components/CredentialDialog';
-import { useDangerStyles } from '../../components/dangerStyles';
-
-const rosterColumns: TableColumnDefinition<StudentItem>[] = [
-  createTableColumn({ columnId: 'username', renderHeaderCell: () => '学号' }),
-  createTableColumn({ columnId: 'display_name', renderHeaderCell: () => '姓名' }),
-  createTableColumn({ columnId: 'groups', renderHeaderCell: () => '组别' }),
-  createTableColumn({ columnId: 'is_active', renderHeaderCell: () => '状态' }),
-];
-
-interface PanelProps {
-  title: string;
-  hint: string;
-  groups: GroupItem[];
-  emptyText: string;
-  actionLabel: string;
-  /** Fluent `Button` 的 icon 槽要的是元素，不是任意 ReactNode（ReactNode 含 false，会 TS2322）。 */
-  actionIcon: ReactElement;
-  onAction: (group: GroupItem) => void;
-  busy: boolean;
-}
-
-/** 「可教组别」分配面板的一列：组名 + 成员数 + 加入/移出动作。 */
-function GroupPanel({ title, hint, groups, emptyText, actionLabel, actionIcon, onAction, busy }: PanelProps) {
-  const t = useTheme();
-  return (
-    <div
-      style={{
-        flex: 1,
-        minWidth: '240px',
-        display: 'flex',
-        flexDirection: 'column',
-        gap: tokens.spacingVerticalSNudge,
-        border: `1px solid ${t.colorNeutralStroke2}`,
-        borderRadius: tokens.borderRadiusMedium,
-        padding: tokens.spacingVerticalS,
-      }}
-    >
-      <div>
-        <Text weight="semibold">{title}</Text>
-        <Caption1 style={{ display: 'block', color: t.colorNeutralForeground3 }}>{hint}</Caption1>
-      </div>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, maxHeight: '280px', overflowY: 'auto' }}>
-        {groups.length === 0 ? (
-          <Caption1 style={{ color: t.colorNeutralForeground3 }}>{emptyText}</Caption1>
-        ) : (
-          groups.map((g) => (
-            <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS }}>
-              <Text size={300} style={{ flex: 1 }}>{g.name}</Text>
-              <Caption1 style={{ color: t.colorNeutralForeground4 }}>{g.member_count} 人</Caption1>
-              <Button size="small" appearance="subtle" icon={actionIcon} disabled={busy} onClick={() => onAction(g)}>
-                {actionLabel}
-              </Button>
-            </div>
-          ))
-        )}
-      </div>
-    </div>
-  );
-}
 
 /**
- * 教师详情（BD-02 / BD-06）：
- * ① 可教组别（层 2）——admin 唯一的任教安排入口，左右双栏分配，保存前列 diff 再确认；
- * ② 学生名单（层 3）——**只读**：admin 直绑写接口已删除，名单由教师本人在可教组内拉/移；
+ * 教师详情（BD-02 / BD-06 + 0.3.2 F1）：
+ * ① 可教组别（层 2）——admin 唯一的任教安排入口：列出已分配组 + 「添加组」弹窗勾选，保存为全量替换；
+ * ② 学生名单——口径是「可教组别成员并集 ∪ 手动添加」，矩阵呈现，撤销组别即刻移除该组学生；
  * ③ 重置密码——随机密码只在响应里给一次（PW-04 / PW-09）。
  */
 export function AdminTeacherDetail() {
   const { id } = useParams();
   const t = useTheme();
-  const danger = useDangerStyles();
   const navigate = useNavigate();
   const teacherId = Number(id);
 
@@ -124,10 +59,13 @@ export function AdminTeacherDetail() {
   const [savedGroupIds, setSavedGroupIds] = useState<Set<number>>(new Set());
   /** 页面上的工作副本，点「保存分配」前不落库。 */
   const [pickedGroupIds, setPickedGroupIds] = useState<Set<number>>(new Set());
-  const [confirmOpen, setConfirmOpen] = useState(false);
 
-  const [students, setStudents] = useState<StudentItem[]>([]);
-  const [rosterIds, setRosterIds] = useState<Set<number>>(new Set());
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [pickerIds, setPickerIds] = useState<string[]>([]);
+  const [pickerText, setPickerText] = useState('');
+  const [pickerQuery, setPickerQuery] = useState('');
+
+  const [roster, setRoster] = useState<RosterEntry[]>([]);
   const [rosterSearch, setRosterSearch] = useState('');
 
   const [busy, setBusy] = useState(false);
@@ -137,16 +75,15 @@ export function AdminTeacherDetail() {
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    Promise.all([listTeachers(), listGroups(), getTeacherGroups(teacherId), getTeacherStudents(teacherId), listStudents()])
-      .then(([teachers, groups, assigned, roster, allStudents]) => {
+    Promise.all([listTeachers(), listGroups(), getTeacherGroups(teacherId), getTeacherStudents(teacherId)])
+      .then(([teachers, groups, assigned, teacherRoster]) => {
         if (cancelled) return;
         const teacher = teachers.find((x) => x.id === teacherId);
         setTeacherName(teacher ? `${teacher.display_name}（${teacher.username}）` : `#${teacherId}`);
         setAllGroups(groups);
         setSavedGroupIds(new Set(assigned.group_ids));
         setPickedGroupIds(new Set(assigned.group_ids));
-        setRosterIds(new Set(roster.student_ids));
-        setStudents(allStudents);
+        setRoster(teacherRoster.students);
         setError(null);
       })
       .catch((e) => {
@@ -161,15 +98,21 @@ export function AdminTeacherDetail() {
   }, [teacherId]);
 
   const groupById = useMemo(() => new Map(allGroups.map((g) => [g.id, g] as const)), [allGroups]);
-  const availableGroups = allGroups.filter((g) => !pickedGroupIds.has(g.id));
-  const pickedGroups = Array.from(pickedGroupIds)
-    .map((gid) => groupById.get(gid))
-    .filter((g): g is GroupItem => Boolean(g))
-    .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN'));
+  const assignableGroups = useMemo(
+    () => allGroups.filter((g) => !pickedGroupIds.has(g.id)),
+    [allGroups, pickedGroupIds],
+  );
+  const pickedGroups = useMemo(
+    () =>
+      Array.from(pickedGroupIds)
+        .map((gid) => groupById.get(gid))
+        .filter((g): g is GroupItem => Boolean(g))
+        .sort((a, b) => a.name.localeCompare(b.name, 'zh-Hans-CN')),
+    [pickedGroupIds, groupById],
+  );
 
   const addedIds = Array.from(pickedGroupIds).filter((gid) => !savedGroupIds.has(gid));
   const removedIds = Array.from(savedGroupIds).filter((gid) => !pickedGroupIds.has(gid));
-  const namesOf = (ids: number[]) => ids.map((gid) => `「${groupById.get(gid)?.name ?? gid}」`).join('、') || '无';
 
   const setPicked = (gid: number, on: boolean) => {
     setPickedGroupIds((prev) => {
@@ -180,10 +123,26 @@ export function AdminTeacherDetail() {
     });
   };
 
+  const openPicker = () => {
+    setPickerIds([]);
+    setPickerText('');
+    setPickerQuery('');
+    setPickerOpen(true);
+  };
+
+  const confirmPicker = () => {
+    const ids = pickerIds.map(Number).filter((n) => !Number.isNaN(n));
+    setPickedGroupIds((prev) => {
+      const next = new Set(prev);
+      for (const gid of ids) next.add(gid);
+      return next;
+    });
+    setPickerOpen(false);
+  };
+
   const handleSaveGroups = async () => {
     setBusy(true);
     setMessage(null);
-    setConfirmOpen(false);
     try {
       const result: TeacherGroups = await putTeacherGroups(teacherId, Array.from(pickedGroupIds));
       const next = new Set(result.group_ids);
@@ -191,7 +150,7 @@ export function AdminTeacherDetail() {
       setPickedGroupIds(new Set(next));
       setMessage({
         intent: 'success',
-        text: `可教组别已保存（新增 ${addedIds.length} 个、移除 ${removedIds.length} 个）。教师侧的既有名单保留，只是不能再从被移除的组拉新人。`,
+        text: `可教组别已保存（新增 ${addedIds.length} 个、移除 ${removedIds.length} 个）。被移除组的学生已立即离开该教师的名单，历史提交与成绩仍保留。`,
       });
     } catch (err) {
       setMessage({ intent: 'error', text: errMessage(err) });
@@ -200,12 +159,10 @@ export function AdminTeacherDetail() {
     }
   };
 
-  /** BD-06：名单只读，这里只导出查看用的 CSV，不做任何写入。 */
-  const rosterStudents = useMemo(() => students.filter((s) => rosterIds.has(s.id)), [students, rosterIds]);
   const keyword = rosterSearch.trim();
   const visibleRoster = keyword
-    ? rosterStudents.filter((s) => s.username.includes(keyword) || s.display_name.includes(keyword))
-    : rosterStudents;
+    ? roster.filter((s) => s.username.includes(keyword) || s.display_name.includes(keyword))
+    : roster;
 
   const handleResetPassword = async () => {
     if (!window.confirm('确定重置该教师的密码？将生成一个随机密码，原密码立即失效。')) return;
@@ -223,6 +180,14 @@ export function AdminTeacherDetail() {
 
   if (loading) return <LoadingView />;
   if (error) return <ErrorView error={error} onRetry={() => navigate(0)} />;
+
+  const pickerNameById = new Map(allGroups.map((g) => [String(g.id), g] as const));
+  const pickerCandidates = pickerQuery.trim()
+    ? assignableGroups.filter((g) => g.name.toLowerCase().includes(pickerQuery.trim().toLowerCase()))
+    : assignableGroups;
+  const pickerPicked = pickerIds
+    .map((gid) => pickerNameById.get(gid))
+    .filter((g): g is GroupItem => Boolean(g));
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL }}>
@@ -252,7 +217,7 @@ export function AdminTeacherDetail() {
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: tokens.spacingHorizontalS }}>
               <Text weight="semibold">可教组别（任教安排）</Text>
               <Badge appearance="tint" size="large">
-                已选 {pickedGroupIds.size} / 共 {allGroups.length}
+                已分配 {pickedGroupIds.size} / 共 {allGroups.length}
               </Badge>
             </span>
           }
@@ -261,42 +226,55 @@ export function AdminTeacherDetail() {
               appearance="primary"
               icon={busy ? <Spinner size="tiny" /> : <Save24Regular />}
               disabled={busy || (addedIds.length === 0 && removedIds.length === 0)}
-              onClick={() => setConfirmOpen(true)}
+              onClick={() => void handleSaveGroups()}
             >
               保存分配
             </Button>
           }
         />
         <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-          组别（行政班）的成员由管理员在「学生管理」维护；这里决定该教师<Text weight="bold">能从哪些组里</Text>拉学生进自己的名单。
-          保存为全量替换，教师侧已有名单不受影响。
+          组别（行政班）的成员由管理员在「学生管理 → 分组管理」维护；分配给教师的组，其成员自动成为该教师的学生，
+          也可在新建场次时选作受众。保存为全量替换，撤销某组后该组学生立即离开教师名单。
         </Caption1>
         {addedIds.length + removedIds.length > 0 && (
           <Caption1 style={{ display: 'block', color: t.colorPaletteDarkOrangeForeground1 }}>
             待保存：新增 {addedIds.length} 个、移除 {removedIds.length} 个。
           </Caption1>
         )}
-        <div style={{ display: 'flex', gap: tokens.spacingHorizontalM, marginTop: tokens.spacingVerticalM, flexWrap: 'wrap' }}>
-          <GroupPanel
-            title="全部组别"
-            hint="点「加入」把该组设为可教"
-            groups={availableGroups}
-            emptyText={allGroups.length === 0 ? '还没有任何组别，请先到「学生管理 → 分组管理」创建。' : '全部组别都已是可教组别。'}
-            actionLabel="加入"
-            actionIcon={<Add24Regular />}
-            onAction={(g) => setPicked(g.id, true)}
-            busy={busy}
-          />
-          <GroupPanel
-            title="已选可教组别"
-            hint="点「移出」取消该组的任教资格"
-            groups={pickedGroups}
-            emptyText="尚未分配任何可教组别，该教师暂时拉不到任何班级的学生。"
-            actionLabel="移出"
-            actionIcon={<ArrowExit24Regular />}
-            onAction={(g) => setPicked(g.id, false)}
-            busy={busy}
-          />
+        <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalSNudge, marginTop: tokens.spacingVerticalM }}>
+          {pickedGroups.length === 0 ? (
+            <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+              {allGroups.length === 0
+                ? '还没有任何组别，请先到「学生管理 → 分组管理」创建。'
+                : '尚未分配任何可教组别，该教师目前没有可教学生。'}
+            </Caption1>
+          ) : (
+            pickedGroups.map((g) => (
+              <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS }}>
+                <Text size={300} style={{ flex: 1 }}>{g.name}</Text>
+                <Caption1 style={{ color: t.colorNeutralForeground4 }}>{g.member_count} 人</Caption1>
+                <Button
+                  size="small"
+                  appearance="subtle"
+                  icon={<ArrowExit24Regular />}
+                  disabled={busy}
+                  onClick={() => setPicked(g.id, false)}
+                >
+                  移除
+                </Button>
+              </div>
+            ))
+          )}
+          <div>
+            <Button
+              appearance="secondary"
+              icon={<Add24Regular />}
+              disabled={busy || assignableGroups.length === 0}
+              onClick={openPicker}
+            >
+              添加组
+            </Button>
+          </div>
         </div>
       </Card>
 
@@ -304,92 +282,134 @@ export function AdminTeacherDetail() {
         <CardHeader
           header={
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: tokens.spacingHorizontalS }}>
-              <Text weight="semibold">学生名单（只读）</Text>
-              <Badge appearance="outline" size="large">{rosterStudents.length} 人</Badge>
+              <Text weight="semibold">学生名单</Text>
+              <Badge appearance="outline" size="large">{roster.length} 人</Badge>
             </span>
           }
         />
         <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-          名单（层 3）由教师本人在「我的学生 → 从班级拉学生」里维护，管理员只能查看——原「勾选学生绑定教师」的写入口已随 BD-06 删除。
+          名单 = 该教师可教组别里的全部学生 ∪ 手动按学号添加的学生；管理员撤销某组后，该组学生立即离开名单
+          （历史提交与成绩仍保留）。带角标的是手动添加的学生。
         </Caption1>
         <div style={{ marginTop: tokens.spacingVerticalS }}>
           <SearchBox placeholder="按学号或姓名筛选名单" value={rosterSearch} onChange={(_, d) => setRosterSearch(d.value)} style={{ maxWidth: '320px' }} />
         </div>
         <div style={{ marginTop: tokens.spacingVerticalM }}>
-          {rosterStudents.length === 0 ? (
-            <EmptyView title="该教师还没有学生名单" description="请在教师可教的组别分配后，由教师本人从班级里拉取学生。" />
+          {roster.length === 0 ? (
+            <EmptyView title="该教师还没有可教学生" description="在上方分配可教组别后，组里的学生会自动出现在这里。" />
           ) : visibleRoster.length === 0 ? (
             <EmptyView title="名单里没有匹配的学生" description="换个关键词试试，或清空筛选查看全部。" />
           ) : (
-            <DataGrid items={visibleRoster} columns={rosterColumns} focusMode="cell" resizableColumns getRowId={(item) => item.id}>
-              <DataGridHeader>
-                <DataGridRow>
-                  {({ renderHeaderCell }) => <DataGridHeaderCell>{renderHeaderCell()}</DataGridHeaderCell>}
-                </DataGridRow>
-              </DataGridHeader>
-              <DataGridBody<StudentItem>>
-                {({ item, rowId }) => (
-                  <DataGridRow<StudentItem> key={rowId}>
-                    {({ columnId }) => (
-                      <DataGridCell>
-                        {columnId === 'username' && item.username}
-                        {columnId === 'display_name' && item.display_name}
-                        {columnId === 'groups' && (
-                          item.groups.length === 0
-                            ? <Caption1 style={{ color: t.colorNeutralForeground3 }}>—</Caption1>
-                            : (
-                              <div style={{ display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalXS }}>
-                                {item.groups.map((g) => (
-                                  <Badge key={g.id} appearance="tint" size="large">{g.name}</Badge>
-                                ))}
-                              </div>
-                            )
-                        )}
-                        {columnId === 'is_active' && (
-                          item.is_active
-                            ? <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>启用</Badge>
-                            : <Badge className="ql-badge-status" size="large" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }}>已停用</Badge>
-                        )}
-                      </DataGridCell>
+            <div style={{ display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalXS }}>
+              {visibleRoster.map((s) => (
+                <Tooltip
+                  key={s.id}
+                  relationship="description"
+                  content={`学号：${s.username}　来源：${s.source === 'manual' ? '手动添加' : (s.group_names.join('、') || '可教组别')}`}
+                >
+                  <span
+                    style={{
+                      position: 'relative',
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
+                      border: `1px solid ${t.colorNeutralStroke2}`,
+                      borderRadius: tokens.borderRadiusCircular,
+                      backgroundColor: t.colorNeutralBackground2,
+                    }}
+                  >
+                    <Text size={200}>{`${s.display_name}(ID:${String(s.id).padStart(2, '0')})`}</Text>
+                    {s.source === 'manual' && (
+                      <span
+                        aria-hidden
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          right: 0,
+                          width: '8px',
+                          height: '8px',
+                          borderRadius: '50%',
+                          backgroundColor: t.colorBrandBackground2,
+                          transform: 'translate(25%, -25%)',
+                        }}
+                      />
                     )}
-                  </DataGridRow>
-                )}
-              </DataGridBody>
-            </DataGrid>
+                  </span>
+                </Tooltip>
+              ))}
+            </div>
           )}
         </div>
       </Card>
 
-      {/* 保存前的 diff 确认（BD-02：全量替换，必须让管理员看清新增/移除了哪些组） */}
-      <Dialog open={confirmOpen} onOpenChange={(_, d) => { if (!busy) setConfirmOpen(d.open); }}>
+      {/* 添加可教组别：候选只列尚未分配的组，确认后加入页面工作副本，仍由「保存分配」全量提交 */}
+      <Dialog open={pickerOpen} onOpenChange={(_, d) => setPickerOpen(d.open)}>
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>确认可教组别变更</DialogTitle>
+            <DialogTitle>添加可教组别</DialogTitle>
             <DialogContent>
               <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
                 <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-                  这是全量替换操作：保存后该教师的可教组别立即生效，并写入审计日志。
-                  教师已有的学生名单保留不断档，只是被移除组里的学生不能再拉新人。
+                  勾选要新增的组，确认后这些组会进入页面待保存列表，仍需点「保存分配」才生效。
                 </Caption1>
-                <div>
-                  <Text weight="semibold" style={{ color: t.colorPaletteGreenForeground1 }}>新增 {addedIds.length} 个组别</Text>
-                  <Caption1 style={{ display: 'block' }}>{namesOf(addedIds)}</Caption1>
-                </div>
-                <div>
-                  <Text weight="semibold" style={{ color: t.colorPaletteRedForeground1 }}>移除 {removedIds.length} 个组别</Text>
-                  <Caption1 style={{ display: 'block' }}>{namesOf(removedIds)}</Caption1>
-                </div>
+                {assignableGroups.length === 0 ? (
+                  <Text size={200} style={{ color: t.colorNeutralForeground3 }}>
+                    没有可添加的组别——其余组别都已是该教师的可教组别。
+                  </Text>
+                ) : (
+                  <>
+                    <Combobox
+                      multiselect
+                      appearance="outline"
+                      placeholder="选择一个或多个组别"
+                      value={pickerText}
+                      selectedOptions={pickerIds}
+                      disabled={busy}
+                      style={{ width: '100%' }}
+                      onChange={(e) => {
+                        const v = e.target instanceof HTMLInputElement ? e.target.value : '';
+                        setPickerText(v);
+                        setPickerQuery(v);
+                      }}
+                      onOptionSelect={(_, d) => {
+                        const ids = d.selectedOptions ?? [];
+                        setPickerIds(ids);
+                        setPickerQuery('');
+                        setPickerText(ids.map((gid) => pickerNameById.get(gid)?.name ?? gid).join('、'));
+                      }}
+                    >
+                      <Listbox>
+                        {pickerCandidates.map((g) => (
+                          <Option key={g.id} value={String(g.id)}>{`${g.name}（${g.member_count} 人）`}</Option>
+                        ))}
+                        {pickerCandidates.length === 0 && (
+                          <Option value="__none__" disabled>没有匹配的组别</Option>
+                        )}
+                      </Listbox>
+                    </Combobox>
+                    {pickerPicked.length > 0 && (
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalXS }}>
+                        <Text size={200} style={{ color: t.colorNeutralForeground3 }}>
+                          已选 {pickerPicked.length} 个组别：
+                        </Text>
+                        {pickerPicked.map((g) => (
+                          <Badge key={g.id} appearance="tint" size="large">{g.name}</Badge>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             </DialogContent>
             <DialogActions>
-              <Button appearance="secondary" onClick={() => setConfirmOpen(false)} disabled={busy}>取消</Button>
+              <Button appearance="secondary" onClick={() => setPickerOpen(false)} disabled={busy}>取消</Button>
               <Button
-                appearance={removedIds.length > 0 ? 'outline' : 'primary'}
-                className={removedIds.length > 0 ? danger.outline : undefined}
-                onClick={() => void handleSaveGroups()}
-                disabled={busy}
+                appearance="primary"
+                icon={busy ? <Spinner size="tiny" /> : <Add24Regular />}
+                disabled={busy || pickerIds.length === 0}
+                onClick={confirmPicker}
               >
-                {busy ? '保存中…' : '确认保存'}
+                确认添加
               </Button>
             </DialogActions>
           </DialogBody>

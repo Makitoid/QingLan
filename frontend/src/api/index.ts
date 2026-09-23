@@ -10,6 +10,7 @@ import type {
   StudentItem,
   StudentListQuery,
   TeacherGroups,
+  TeacherRoster,
   TempCredential,
   BatchResetMode,
   BatchResetResult,
@@ -133,8 +134,8 @@ export function resetTeacherPassword(id: number): Promise<TempCredential> {
 }
 
 /** BD-06：admin 直绑写接口（PUT）已删除，这里只保留只读查看。 */
-export function getTeacherStudents(id: number): Promise<{ student_ids: number[] }> {
-  return request<{ student_ids: number[] }>(`/admin/teachers/${id}/students`);
+export function getTeacherStudents(id: number): Promise<TeacherRoster> {
+  return request<TeacherRoster>(`/admin/teachers/${id}/students`);
 }
 
 /** BD-02：读取该教师可教的组别（层 2）。 */

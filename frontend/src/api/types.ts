@@ -178,6 +178,24 @@ export interface TeacherGroups {
   group_ids: number[];
 }
 
+/** B1：名单学生的来源——教师按学号手动添加，或来自可教组别。 */
+export type RosterSource = 'manual' | 'group';
+
+/** B1：admin 教师详情名单的一名学生，对应后端名单接口的单个条目。 */
+export interface RosterEntry {
+  id: number;
+  username: string;
+  display_name: string;
+  source: RosterSource;
+  /** 含该学生的可教组别名；手动添加且不在任何组里时为空数组。 */
+  group_names: string[];
+}
+
+/** B1：`GET /admin/teachers/{id}/students` 的返回体（可教组别成员并集 ∪ 手动添加）。 */
+export interface TeacherRoster {
+  students: RosterEntry[];
+}
+
 /** PW-01：`AccountCreate` 已去掉 password —— 初始密码由后端统一发放，无需前端填写。 */
 export interface CreateTeacherBody {
   username: string;
