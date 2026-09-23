@@ -29,6 +29,8 @@ import type {
   BatchResult,
   SuccessResult,
   ClassItem,
+  SubgroupItem,
+  TeacherNoticeItem,
   TestCase,
   CaseBody,
   AssignmentSummary,
@@ -299,20 +301,15 @@ export function listTeacherStudents(q?: string): Promise<BoundStudentItem[]> {
   return request<BoundStudentItem[]>(`/teacher/students${queryString({ q: q?.trim() })}`);
 }
 
-/** BD-03：我可教的组（经 `teacher_groups` 过滤）及其成员，只读。 */
+/**
+ * BD-03：我可教的组（经 `teacher_groups` 过滤）及其成员，只读。
+ * 0.3.2 F1 起名单口径改为「可教组成员 ∪ 手动添加」，本接口只用于展示组别徽标。
+ */
 export function listTeacherClasses(): Promise<ClassItem[]> {
   return request<ClassItem[]>('/teacher/classes');
 }
 
-/** BD-03：从可教组里把学生拉进自己的名单；有任一学生不在可教组时整批 403。幂等。 */
-export function teacherBindFromClass(studentIds: number[]): Promise<BatchResult> {
-  return request<BatchResult>('/teacher/students/bind_from_class', {
-    method: 'POST',
-    body: { student_ids: studentIds },
-  });
-}
-
-/** BD-04：按学生 id 兜底添加（转学生 / 旁听等暂不在组的情况）。 */
+/** BD-04：按学生 id 兜底添加（转学生 / 旁听等暂不在组的情况）；后端写审计 `teacher_student_bind`。 */
 export function teacherBindStudents(studentIds: number[]): Promise<BatchResult> {
   return request<BatchResult>('/teacher/students/bind', {
     method: 'POST',
@@ -320,12 +317,57 @@ export function teacherBindStudents(studentIds: number[]): Promise<BatchResult> 
   });
 }
 
-/** BD-05：把自己的名单里的学生移出；历史提交与成绩保留。幂等。 */
+/**
+ * BD-05：把自己的名单里的学生移出；历史提交与成绩保留。幂等。
+ * 0.3.2 F1 语义收窄：组别派生的学生不能在此移出，后端整批 422 ROSTER_DERIVED_STUDENT。
+ */
 export function teacherUnbindStudents(studentIds: number[]): Promise<BatchResult> {
   return request<BatchResult>('/teacher/students/unbind', {
     method: 'POST',
     body: { student_ids: studentIds },
   });
+}
+
+/* ---------- teacher: 子分组（0.3.2 F1，教师私有，用于收窄发布受众） ---------- */
+
+/** 我的子分组（含当前名单口径下的成员）。 */
+export function listTeacherSubgroups(): Promise<SubgroupItem[]> {
+  return request<SubgroupItem[]>('/teacher/subgroups');
+}
+
+/** 新建子分组；重名 409 SUBGROUP_NAME_EXISTS。 */
+export function createTeacherSubgroup(name: string): Promise<SubgroupItem> {
+  return request<SubgroupItem>('/teacher/subgroups', { method: 'POST', body: { name } });
+}
+
+/** 重命名子分组；重名 409 SUBGROUP_NAME_EXISTS。 */
+export function renameTeacherSubgroup(id: number, name: string): Promise<SubgroupItem> {
+  return request<SubgroupItem>(`/teacher/subgroups/${id}`, { method: 'PATCH', body: { name } });
+}
+
+/** 删除子分组；被任何场次引用时 409 SUBGROUP_IN_USE（不会自动放宽已有场次的受众）。 */
+export function deleteTeacherSubgroup(id: number): Promise<void> {
+  return request<void>(`/teacher/subgroups/${id}`, { method: 'DELETE' });
+}
+
+/** 全量替换子分组成员（空数组 = 清空）；成员必须都在当前名单里，否则整批 422。 */
+export function replaceTeacherSubgroupStudents(id: number, studentIds: number[]): Promise<SubgroupItem> {
+  return request<SubgroupItem>(`/teacher/subgroups/${id}/students`, {
+    method: 'PUT',
+    body: { student_ids: studentIds },
+  });
+}
+
+/* ---------- teacher: 一次性提示（0.3.2 F1，目前只有组别被撤销） ---------- */
+
+/** 登录后拉一次：未确认的提示；已 dismiss 的不会再返回。 */
+export function listPendingNotices(): Promise<TeacherNoticeItem[]> {
+  return request<TeacherNoticeItem[]>('/teacher/notices/pending');
+}
+
+/** 确认已读并关闭提示。 */
+export function dismissNotice(id: number): Promise<void> {
+  return request<void>(`/teacher/notices/${id}/dismiss`, { method: 'POST' });
 }
 
 /* ---------- teacher: problems ---------- */

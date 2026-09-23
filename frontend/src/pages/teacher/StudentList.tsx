@@ -4,6 +4,8 @@ import {
   Badge,
   Button,
   Caption1,
+  Card,
+  CardHeader,
   Checkbox,
   createTableColumn,
   DataGrid,
@@ -34,17 +36,23 @@ import {
 import {
   Add24Regular,
   ArrowExit24Regular,
+  Delete24Regular,
   Dismiss24Regular,
+  Edit24Regular,
   PeopleTeam24Regular,
 } from '@fluentui/react-icons';
 import {
+  createTeacherSubgroup,
+  deleteTeacherSubgroup,
   listTeacherClasses,
   listTeacherStudents,
-  teacherBindFromClass,
+  listTeacherSubgroups,
+  renameTeacherSubgroup,
+  replaceTeacherSubgroupStudents,
   teacherBindStudents,
   teacherUnbindStudents,
 } from '../../api';
-import type { BoundStudentItem, ClassItem } from '../../api/types';
+import type { BoundStudentItem, SubgroupItem } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, EmptyView, errCode, errMessage } from '../../components/StateViews';
 import { PageHeader } from '../../components/PageHeader';
@@ -61,20 +69,17 @@ const columns: TableColumnDefinition<BoundStudentItem>[] = [
   createTableColumn({ columnId: 'username', renderHeaderCell: () => '学号' }),
   createTableColumn({ columnId: 'display_name', renderHeaderCell: () => '姓名' }),
   createTableColumn({ columnId: 'groups', renderHeaderCell: () => '组别' }),
+  createTableColumn({ columnId: 'source', renderHeaderCell: () => '来源' }),
   createTableColumn({ columnId: 'is_active', renderHeaderCell: () => '状态' }),
 ];
 
 /**
- * 教师端「我的学生」= 我自己维护的名单（层 3）。
+ * 教师端「我的学生」：左列是我的子分组（自建、用于收窄发布受众），右列是名单成员。
  *
- * GR-02 / BD-01 起教师没有任何组别写权限：`GET /teacher/groups` 与
- * `POST /teacher/students/group_members` 已删除，本页也不出现任何组别编辑控件，
- * 组别（行政班）只以只读徽标展示。名单的三条维护路径：
- * - BD-03 主路径「从班级拉学生」：候选来自 `GET /teacher/classes`（admin 分配的层 2 过滤）。
- * - BD-04 兜底「按学生 ID 添加」：转学生 / 旁听等暂不在组里的场景，后端只回条数不回明细。
- * - BD-05 「移出名单」：不在名单里的 id 被静默忽略，历史提交与成绩保留。
- *
- * 权限红线：本页不提供任何账号维护入口（建号、启停、改口令都归管理员）。
+ * 决策 1b / 1e：「从班级拉学生」已下线——名单 = 可教组成员 ∪ 手动添加，进入本页即是全部
+ * 可教学生；组别派生的学生只能由管理员撤销组别来移出，本页只允许移出手动添加的学生。
+ * 决策 1c：子分组同时是新建场次的发布受众来源。
+ * 可教组别（`GET /teacher/classes`）降级为只读徽标，本页不含任何组别写入口。
  */
 export function TeacherStudentList() {
   const t = useTheme();
@@ -96,46 +101,67 @@ export function TeacherStudentList() {
     loading: classLoading,
     reload: reloadClasses,
   } = useAsync(listTeacherClasses, []);
+  const {
+    data: subgroupData,
+    error: subgroupError,
+    loading: subgroupLoading,
+    reload: reloadSubgroups,
+  } = useAsync(listTeacherSubgroups, []);
 
   const [selectedIds, setSelectedIds] = useState<Set<TableRowId>>(new Set());
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<{ intent: 'success' | 'warning' | 'error'; text: string } | null>(null);
 
-  // 换了一批行就清选择，否则残留的选中态指向已经看不见的行（§8.1 约定）。
-  useEffect(() => {
-    setSelectedIds(new Set());
-  }, [debouncedQ]);
+  // 子分组：新建 / 改名共用一个名称弹窗
+  const [nameDialog, setNameDialog] = useState<{ mode: 'create' | 'rename'; subgroup: SubgroupItem | null } | null>(null);
+  const [nameText, setNameText] = useState('');
+  const [formError, setFormError] = useState<string | null>(null);
 
-  // 「从班级拉学生」
-  const [pullOpen, setPullOpen] = useState(false);
-  const [picked, setPicked] = useState<Set<number>>(new Set());
-  const [pullError, setPullError] = useState<string | null>(null);
+  // 子分组：删除确认（被场次引用时服务端 409）
+  const [deleteTarget, setDeleteTarget] = useState<SubgroupItem | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+
+  // 子分组：成员全量替换（候选永远是完整名单，不受搜索影响）
+  const [membersTarget, setMembersTarget] = useState<SubgroupItem | null>(null);
+  const [memberCandidates, setMemberCandidates] = useState<BoundStudentItem[]>([]);
+  const [memberPicked, setMemberPicked] = useState<number[]>([]);
+  const [memberFilter, setMemberFilter] = useState('');
+  const [membersLoading, setMembersLoading] = useState(false);
+  const [membersError, setMembersError] = useState<string | null>(null);
 
   // 「按学生 ID 添加」
   const [bindOpen, setBindOpen] = useState(false);
   const [idText, setIdText] = useState('');
   const [bindError, setBindError] = useState<string | null>(null);
 
-  // 「移出名单」确认
+  // 「移出手动添加的学生」确认
   const [unbindOpen, setUnbindOpen] = useState(false);
-  const [unbindCount, setUnbindCount] = useState(0);
 
   const students = useMemo(() => data ?? [], [data]);
   const classes = useMemo(() => classData ?? [], [classData]);
-  const noClass = !classLoading && !classError && classes.length === 0;
+  const subgroups = useMemo(() => subgroupData ?? [], [subgroupData]);
 
-  /** 名单与可教班级是同一件事的两面：刷新名单时一起刷新，`bound` 才会跟上。 */
+  /** 我经可教组别拿到的学生 ID：这些学生不能由教师移出名单。 */
+  const groupStudentIds = useMemo(
+    () => new Set(classes.flatMap((cls) => cls.students.map((s) => s.id))),
+    [classes],
+  );
+
+  // 换了一批行就清选择，否则残留的选中态指向已经看不见的行（§8.1 约定）。
+  useEffect(() => {
+    setSelectedIds(new Set());
+  }, [debouncedQ]);
+
   const refresh = () => {
     setSelectedIds(new Set());
     reload();
     reloadClasses();
+    reloadSubgroups();
   };
 
-  const currentSelectedIds = () => students.filter((s) => selectedIds.has(s.id)).map((s) => s.id);
-  const selectedCount = students.filter((s) => selectedIds.has(s.id)).length;
-
-  const pickedIds = useMemo(() => Array.from(picked), [picked]);
-  const pickedCount = pickedIds.length;
+  const selectedRows = students.filter((s) => selectedIds.has(s.id));
+  const selectedCount = selectedRows.length;
+  const selectedDerivedCount = selectedRows.filter((s) => groupStudentIds.has(s.id)).length;
 
   const idTokens = idText.split(ID_SEPARATOR).map((x) => x.trim()).filter(Boolean);
   const idBadTokens = idTokens.filter((x) => !/^\d+$/.test(x));
@@ -144,58 +170,6 @@ export function TeacherStudentList() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [idText],
   );
-
-  const openPull = () => {
-    setPicked(new Set());
-    setPullError(null);
-    setPullOpen(true);
-    reloadClasses();
-  };
-
-  const togglePicked = (id: number, on: boolean) => {
-    setPicked((prev) => {
-      const next = new Set(prev);
-      if (on) next.add(id);
-      else next.delete(id);
-      return next;
-    });
-  };
-
-  /** 组内「全选」：只在还能勾选（未在我名单里）的成员之间来回切换。 */
-  const toggleGroup = (cls: ClassItem, on: boolean) => {
-    const ids = cls.students.filter((s) => !s.bound).map((s) => s.id);
-    setPicked((prev) => {
-      const next = new Set(prev);
-      ids.forEach((id) => (on ? next.add(id) : next.delete(id)));
-      return next;
-    });
-  };
-
-  const handlePull = async () => {
-    if (pickedCount === 0) return;
-    setBusy(true);
-    setPullError(null);
-    try {
-      const result = await teacherBindFromClass(pickedIds);
-      setPullOpen(false);
-      setPicked(new Set());
-      setNotice(
-        result.success_count === 0
-          ? { intent: 'warning', text: '没有新增学生：勾选的学生都已经在你的名单里。' }
-          : { intent: 'success', text: `已拉入 ${result.success_count} 人。` },
-      );
-      refresh();
-    } catch (err) {
-      // BD-03：任一学生不在可教班级 → 整批 403 且库里零变化，后端文案照抄给老师看。
-      setPullError(
-        errCode(err) === 'STUDENT_NOT_IN_CLASS'
-          ? `${errMessage(err)}（本次未拉入任何学生。可能是管理员刚刚调整过你的可教组别，关闭本窗口重新打开即可拿到最新名单。）`
-          : errMessage(err),
-      );
-    } finally {
-      setBusy(false);
-    }
-  };
 
   const handleBindByIds = async () => {
     if (parsedIds.length === 0) return;
@@ -226,15 +200,112 @@ export function TeacherStudentList() {
     }
   };
 
-  const openUnbind = () => {
-    const ids = currentSelectedIds();
-    if (ids.length === 0) return;
-    setUnbindCount(ids.length);
-    setUnbindOpen(true);
+  const openCreate = () => {
+    setFormError(null);
+    setNameText('');
+    setNameDialog({ mode: 'create', subgroup: null });
   };
 
+  const openRename = (subgroup: SubgroupItem) => {
+    setFormError(null);
+    setNameText(subgroup.name);
+    setNameDialog({ mode: 'rename', subgroup });
+  };
+
+  const handleNameSubmit = async () => {
+    if (!nameDialog) return;
+    const name = nameText.trim();
+    if (!name) {
+      setFormError('请输入子分组名称');
+      return;
+    }
+    setBusy(true);
+    setFormError(null);
+    try {
+      if (nameDialog.mode === 'create') {
+        await createTeacherSubgroup(name);
+        setNotice({ intent: 'success', text: `已新建子分组「${name}」，接着可以往里加成员。` });
+      } else if (nameDialog.subgroup) {
+        await renameTeacherSubgroup(nameDialog.subgroup.id, name);
+        setNotice({ intent: 'success', text: `子分组已改名为「${name}」。` });
+      }
+      setNameDialog(null);
+      refresh();
+    } catch (err) {
+      setFormError(errMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setBusy(true);
+    setDeleteError(null);
+    try {
+      await deleteTeacherSubgroup(deleteTarget.id);
+      setNotice({ intent: 'success', text: `已删除子分组「${deleteTarget.name}」，名单里的学生不受影响。` });
+      setDeleteTarget(null);
+      refresh();
+    } catch (err) {
+      // 409 SUBGROUP_IN_USE：后端消息里带着引用了它的场次标题。
+      setDeleteError(errMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const openMembers = async (subgroup: SubgroupItem) => {
+    setMembersTarget(subgroup);
+    setMemberPicked(subgroup.student_ids);
+    setMemberFilter('');
+    setMembersError(null);
+    setMembersLoading(true);
+    try {
+      // 全量替换的上送集合必须基于完整名单，不能让搜索框把候选人截断。
+      const rows = await listTeacherStudents();
+      setMemberCandidates(rows);
+    } catch (err) {
+      setMemberCandidates([]);
+      setMembersError(errMessage(err));
+    } finally {
+      setMembersLoading(false);
+    }
+  };
+
+  const toggleMember = (studentId: number, checked: boolean) => {
+    setMemberPicked((prev) => (checked ? [...prev, studentId] : prev.filter((id) => id !== studentId)));
+  };
+
+  const handleMembersSubmit = async () => {
+    if (!membersTarget) return;
+    setBusy(true);
+    setMembersError(null);
+    try {
+      await replaceTeacherSubgroupStudents(membersTarget.id, memberPicked);
+      setNotice({
+        intent: 'success',
+        text: `子分组「${membersTarget.name}」的成员已更新（${memberPicked.length} 人）。`,
+      });
+      setMembersTarget(null);
+      refresh();
+    } catch (err) {
+      setMembersError(errMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const visibleCandidates = useMemo(() => {
+    const q = memberFilter.trim().toLowerCase();
+    return q
+      ? memberCandidates.filter((s) => s.username.toLowerCase().includes(q)
+        || s.display_name.toLowerCase().includes(q))
+      : memberCandidates;
+  }, [memberCandidates, memberFilter]);
+
   const handleUnbind = async () => {
-    const ids = currentSelectedIds();
+    const ids = selectedRows.map((s) => s.id);
     if (ids.length === 0) {
       setUnbindOpen(false);
       return;
@@ -254,7 +325,11 @@ export function TeacherStudentList() {
       );
       refresh();
     } catch (err) {
-      setNotice({ intent: 'error', text: `移出失败：${errMessage(err)}` });
+      setNotice(
+        errCode(err) === 'ROSTER_DERIVED_STUDENT'
+          ? { intent: 'warning', text: errMessage(err) }
+          : { intent: 'error', text: `移出失败：${errMessage(err)}` },
+      );
     } finally {
       setBusy(false);
     }
@@ -267,7 +342,7 @@ export function TeacherStudentList() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
       <PageHeader
         title="我的学生"
-        subtitle="这是我自己维护的学生名单：可以从可教班级里拉人、按学生 ID 补人，也可以把人移出。组别（行政班）及其成员由管理员维护，本页只读，也没有任何账号维护入口。"
+        subtitle="名单由管理员分配给你的可教组别自动组成，也可以按学生 ID 补人；组别派生的学生如需移出，请找管理员撤销相应组别。子分组是你在名单之上自建的集合，发布场次时用它选择受众。"
         actions={
           <>
             <SearchBox
@@ -276,28 +351,11 @@ export function TeacherStudentList() {
               onChange={(_, d) => setSearch(d.value)}
               style={{ width: '220px' }}
             />
-            <Button
-              appearance="secondary"
-              icon={<PeopleTeam24Regular />}
-              onClick={openPull}
-              disabled={busy || classLoading || classes.length === 0}
-              title={classes.length === 0 ? '还没有可教的班级，请联系管理员分配' : undefined}
-            >
-              从班级拉学生
-            </Button>
             <Button appearance="secondary" icon={<Add24Regular />} onClick={() => { setBindError(null); setBindOpen(true); }} disabled={busy}>
               按学生 ID 添加
             </Button>
           </>
         }
-      />
-
-      <BulkActionBar
-        selectedCount={selectedCount}
-        actions={[
-          { key: 'unbind', label: '移出名单', icon: <ArrowExit24Regular />, danger: true, disabled: busy, onClick: openUnbind },
-          { key: 'cancel', label: '取消选择', icon: <Dismiss24Regular />, disabled: busy, onClick: () => setSelectedIds(new Set()) },
-        ]}
       />
 
       {notice && (
@@ -311,10 +369,33 @@ export function TeacherStudentList() {
         </MessageBar>
       )}
 
+      <BulkActionBar
+        selectedCount={selectedCount}
+        actions={[
+          {
+            key: 'unbind',
+            label: '移出手动添加',
+            icon: <ArrowExit24Regular />,
+            danger: true,
+            disabled: busy || selectedDerivedCount > 0,
+            onClick: () => setUnbindOpen(true),
+          },
+          { key: 'cancel', label: '取消选择', icon: <Dismiss24Regular />, disabled: busy, onClick: () => setSelectedIds(new Set()) },
+        ]}
+      />
+
+      {selectedDerivedCount > 0 && (
+        <MessageBar intent="warning" style={{ borderRadius: tokens.borderRadiusMedium }}>
+          <MessageBarBody>
+            {`选中的 ${selectedDerivedCount} 名学生来自你的可教组别，需由管理员撤销组别后才能离开名单，因此「移出手动添加」已置灰；请取消勾选这些学生后重试。`}
+          </MessageBarBody>
+        </MessageBar>
+      )}
+
       {!!classError && (
         <MessageBar intent="warning" style={{ borderRadius: tokens.borderRadiusMedium }}>
           <MessageBarBody>
-            可教班级暂时读不到，「从班级拉学生」先置灰：{errMessage(classError)}
+            {`可教组别暂时读不到，下表的「来源」列可能不准：${errMessage(classError)}`}
           </MessageBarBody>
           <MessageBarActions>
             <Button size="small" appearance="subtle" onClick={reloadClasses}>重试</Button>
@@ -322,159 +403,310 @@ export function TeacherStudentList() {
         </MessageBar>
       )}
 
-      {noClass && (
-        <MessageBar intent="info" style={{ borderRadius: tokens.borderRadiusMedium }}>
-          <MessageBarBody>
-            还没有可教的班级，请联系管理员在「教师管理 → 可教组别」里分配；分配后就能在这里从班级拉学生。
-            急用的话（转学生、旁听）可以先用「按学生 ID 添加」。
-          </MessageBarBody>
-        </MessageBar>
-      )}
-
-      <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-        {debouncedQ
-          ? `关键词「${debouncedQ}」在当前名单里匹配 ${students.length} 名学生（后端搜索，共多少条以清空搜索为准）。`
-          : `共 ${students.length} 名学生在你的名单里。`}
-      </Caption1>
-
-      {students.length === 0 ? (
-        <EmptyView
-          title={debouncedQ ? '没有匹配的学生' : '名单里还没有学生'}
-          description={debouncedQ
-            ? '换个关键词试试，或清空搜索框查看全部学生。'
-            : '用右上角「从班级拉学生」把可教班级的学生拉进名单；班级还没分配给你时，可以先「按学生 ID 添加」。'}
-          action={debouncedQ
-            ? <Button appearance="secondary" size="small" onClick={() => setSearch('')}>清空搜索</Button>
-            : (classes.length > 0
-              ? <Button appearance="primary" size="small" icon={<PeopleTeam24Regular />} onClick={openPull}>从班级拉学生</Button>
-              : undefined)}
-        />
-      ) : (
-        <DataGrid
-          items={students}
-          columns={columns}
-          focusMode="cell"
-          resizableColumns
-          selectionMode="multiselect"
-          getRowId={(item) => item.id}
-          selectedItems={selectedIds}
-          onSelectionChange={(_, d) => setSelectedIds(new Set(d.selectedItems))}
-        >
-          <DataGridHeader>
-            <DataGridRow>
-              {({ renderHeaderCell }) => <DataGridHeaderCell>{renderHeaderCell()}</DataGridHeaderCell>}
-            </DataGridRow>
-          </DataGridHeader>
-          <DataGridBody<BoundStudentItem>>
-            {({ item, rowId }) => (
-              <DataGridRow<BoundStudentItem> key={rowId}>
-                {({ columnId }) => (
-                  <DataGridCell>
-                    {columnId === 'username' && item.username}
-                    {columnId === 'display_name' && item.display_name}
-                    {columnId === 'groups' && (
-                      item.groups.length === 0
-                        ? <Caption1 style={{ color: t.colorNeutralForeground3 }}>不在任何组别</Caption1>
-                        : (
-                          <div style={{ display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalXS }}>
-                            {item.groups.map((g) => (
-                              <Badge key={g.id} appearance="tint" size="large">{g.name}</Badge>
-                            ))}
-                          </div>
-                        )
-                    )}
-                    {columnId === 'is_active' && (
-                      item.is_active
-                        ? <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>启用</Badge>
-                        : <Badge className="ql-badge-status" size="large" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }}>已停用</Badge>
-                    )}
-                  </DataGridCell>
-                )}
-              </DataGridRow>
+      <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'flex-start', gap: tokens.spacingHorizontalL }}>
+        <Card size="medium" style={{ flex: '1 1 320px', minWidth: '280px' }}>
+          <CardHeader
+            header={<Text weight="semibold">我的子分组</Text>}
+            action={(
+              <Button size="small" appearance="secondary" icon={<Add24Regular />} onClick={openCreate} disabled={busy}>
+                新建子分组
+              </Button>
             )}
-          </DataGridBody>
-        </DataGrid>
-      )}
+          />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
+            {subgroupLoading ? (
+              <Spinner label="正在读取子分组…" />
+            ) : subgroups.length === 0 ? (
+              <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                还没有子分组。可以按教学进度把名单分成若干组，发布场次时按组下发。
+              </Caption1>
+            ) : (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
+                {subgroups.map((subgroup) => (
+                  <div
+                    key={subgroup.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      flexWrap: 'wrap',
+                      gap: tokens.spacingHorizontalXS,
+                      padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
+                      border: `1px solid ${t.colorNeutralStroke3}`,
+                      borderRadius: tokens.borderRadiusMedium,
+                    }}
+                  >
+                    <Text weight="semibold">{subgroup.name}</Text>
+                    <Caption1 style={{ color: t.colorNeutralForeground3 }}>{`${subgroup.member_count} 人`}</Caption1>
+                    <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center' }}>
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<PeopleTeam24Regular />}
+                        disabled={busy}
+                        onClick={() => void openMembers(subgroup)}
+                      >
+                        成员
+                      </Button>
+                      <Button size="small" appearance="subtle" icon={<Edit24Regular />} disabled={busy} onClick={() => openRename(subgroup)}>
+                        改名
+                      </Button>
+                      <Button
+                        size="small"
+                        appearance="subtle"
+                        icon={<Delete24Regular />}
+                        disabled={busy}
+                        style={{ color: t.colorPaletteRedForeground1 }}
+                        onClick={() => { setDeleteError(null); setDeleteTarget(subgroup); }}
+                      >
+                        删除
+                      </Button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
-      {/* BD-03：从可教班级拉学生。候选集完全来自 /teacher/classes，教师看不到组别之外的名册。 */}
-      <Dialog open={pullOpen} onOpenChange={(_, d) => { if (!busy) setPullOpen(d.open); }}>
+            {!!subgroupError && (
+              <MessageBar intent="warning" style={{ borderRadius: tokens.borderRadiusMedium }}>
+                <MessageBarBody>{`子分组读取失败：${errMessage(subgroupError)}`}</MessageBarBody>
+                <MessageBarActions>
+                  <Button size="small" appearance="subtle" onClick={reloadSubgroups}>重试</Button>
+                </MessageBarActions>
+              </MessageBar>
+            )}
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS }}>
+              <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                可教组别（只读，由管理员分配；其成员就是名单来源）
+              </Caption1>
+              {classLoading ? (
+                <Spinner size="tiny" />
+              ) : classes.length === 0 ? (
+                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                  还没有可教组别，请联系管理员在「教师管理 → 可教组别」里分配。
+                </Caption1>
+              ) : (
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalXS }}>
+                  {classes.map((cls) => (
+                    <Badge key={cls.id} appearance="tint" size="large">
+                      {`${cls.name}（${cls.member_count} 人）`}
+                    </Badge>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </Card>
+
+        <Card size="medium" style={{ flex: '2 1 520px', minWidth: '320px' }}>
+          <CardHeader header={<Text weight="semibold">{`名单（${students.length} 人）`}</Text>} />
+          <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
+            <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+              {debouncedQ
+                ? `关键词「${debouncedQ}」在当前名单里匹配 ${students.length} 名学生（后端搜索，共多少条以清空搜索为准）。`
+                : '名单 = 可教组别成员 ∪ 按 ID 手动添加；「组别」列展示学生所属的行政班。'}
+            </Caption1>
+
+            {students.length === 0 ? (
+              <EmptyView
+                title={debouncedQ ? '没有匹配的学生' : '名单里还没有学生'}
+                description={debouncedQ
+                  ? '换个关键词试试，或清空搜索框查看全部学生。'
+                  : '可教组别里的学生会自动出现在这里；组别还没分配给你时，可以先用「按学生 ID 添加」。'}
+                action={debouncedQ
+                  ? <Button appearance="secondary" size="small" onClick={() => setSearch('')}>清空搜索</Button>
+                  : undefined}
+              />
+            ) : (
+              <DataGrid
+                items={students}
+                columns={columns}
+                focusMode="cell"
+                resizableColumns
+                selectionMode="multiselect"
+                getRowId={(item) => item.id}
+                selectedItems={selectedIds}
+                onSelectionChange={(_, d) => setSelectedIds(new Set(d.selectedItems))}
+              >
+                <DataGridHeader>
+                  <DataGridRow>
+                    {({ renderHeaderCell }) => <DataGridHeaderCell>{renderHeaderCell()}</DataGridHeaderCell>}
+                  </DataGridRow>
+                </DataGridHeader>
+                <DataGridBody<BoundStudentItem>>
+                  {({ item, rowId }) => (
+                    <DataGridRow<BoundStudentItem> key={rowId}>
+                      {({ columnId }) => (
+                        <DataGridCell>
+                          {columnId === 'username' && item.username}
+                          {columnId === 'display_name' && item.display_name}
+                          {columnId === 'groups' && (
+                            item.groups.length === 0
+                              ? <Caption1 style={{ color: t.colorNeutralForeground3 }}>不在任何组别</Caption1>
+                              : (
+                                <div style={{ display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalXS }}>
+                                  {item.groups.map((g) => (
+                                    <Badge key={g.id} appearance="tint" size="large">{g.name}</Badge>
+                                  ))}
+                                </div>
+                              )
+                          )}
+                          {columnId === 'source' && (
+                            groupStudentIds.has(item.id)
+                              ? <Badge appearance="outline" size="large">可教组别</Badge>
+                              : <Badge appearance="tint" size="large">手动添加</Badge>
+                          )}
+                          {columnId === 'is_active' && (
+                            item.is_active
+                              ? <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>启用</Badge>
+                              : <Badge className="ql-badge-status" size="large" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }}>已停用</Badge>
+                          )}
+                        </DataGridCell>
+                      )}
+                    </DataGridRow>
+                  )}
+                </DataGridBody>
+              </DataGrid>
+            )}
+          </div>
+        </Card>
+      </div>
+
+      {/* 子分组名称：新建 / 改名共用 */}
+      <Dialog open={nameDialog !== null} onOpenChange={(_, d) => { if (!d.open && !busy) setNameDialog(null); }}>
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>从班级拉学生</DialogTitle>
+            <DialogTitle>{nameDialog?.mode === 'rename' ? '重命名子分组' : '新建子分组'}</DialogTitle>
             <DialogContent>
               <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
                 <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-                  这里只列出管理员分配给你的可教班级（行政班）里的学生。勾选后一次性拉入我的名单，已经在名单里的会标出来并置灰；
-                  停用的学生也能勾选，但他们目前无法登录。
+                  子分组只由你在名单之上维护，用于发布场次时选择受众；管理员分配的可教组别不受影响。
                 </Caption1>
-
-                {pullError && (
+                <Field label="名称" required>
+                  <Input
+                    value={nameText}
+                    onChange={(_, d) => setNameText(d.value)}
+                    placeholder="如：提高班 A 组"
+                    maxLength={50}
+                    autoFocus
+                  />
+                </Field>
+                {formError && (
                   <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
-                    <MessageBarBody>{pullError}</MessageBarBody>
+                    <MessageBarBody>{formError}</MessageBarBody>
                   </MessageBar>
-                )}
-
-                {classLoading ? (
-                  <Spinner label="正在读取可教班级…" />
-                ) : classes.length === 0 ? (
-                  <Text size={200} style={{ color: t.colorNeutralForeground3 }}>
-                    还没有可教的班级，请联系管理员在「教师管理 → 可教组别」里分配。
-                  </Text>
-                ) : (
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM, maxHeight: '56vh', overflowY: 'auto' }}>
-                    {classes.map((cls) => {
-                      const pullable = cls.students.filter((s) => !s.bound);
-                      const groupAllPicked = pullable.length > 0 && pullable.every((s) => picked.has(s.id));
-                      return (
-                        <div key={cls.id} style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, flexWrap: 'wrap' }}>
-                            <Text weight="semibold">{cls.name}</Text>
-                            <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-                              {`${cls.member_count} 人，可拉入 ${pullable.length} 人`}
-                            </Caption1>
-                            <Checkbox
-                              checked={groupAllPicked}
-                              disabled={busy || pullable.length === 0}
-                              onChange={(_, d) => toggleGroup(cls, Boolean(d.checked))}
-                              label={groupAllPicked ? '取消全选' : '全选本班'}
-                            />
-                          </div>
-                          {cls.students.length === 0 ? (
-                            <Caption1 style={{ color: t.colorNeutralForeground3 }}>这个班级还没有成员。</Caption1>
-                          ) : (
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS, paddingInlineStart: tokens.spacingHorizontalS }}>
-                              {cls.students.map((s) => (
-                                <div key={s.id} style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS, flexWrap: 'wrap' }}>
-                                  <Checkbox
-                                    checked={picked.has(s.id)}
-                                    disabled={busy || s.bound}
-                                    onChange={(_, d) => togglePicked(s.id, Boolean(d.checked))}
-                                    label={`${s.username}　${s.display_name}`}
-                                  />
-                                  {!s.is_active && (
-                                    <Badge className="ql-badge-status" size="large" style={{ color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }}>已停用</Badge>
-                                  )}
-                                  {s.bound && <Badge appearance="outline" size="large">已在名单</Badge>}
-                                </div>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
                 )}
               </div>
             </DialogContent>
             <DialogActions>
-              <Button appearance="secondary" onClick={() => setPullOpen(false)} disabled={busy}>取消</Button>
+              <Button appearance="secondary" onClick={() => setNameDialog(null)} disabled={busy}>取消</Button>
+              <Button
+                appearance="primary"
+                icon={nameDialog?.mode === 'rename' ? <Edit24Regular /> : <Add24Regular />}
+                disabled={busy || !nameText.trim()}
+                onClick={() => void handleNameSubmit()}
+              >
+                {busy ? '保存中…' : '保存'}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      {/* 删除保护：被场次引用时服务端 409，消息里列出相关场次 */}
+      <Dialog open={deleteTarget !== null} onOpenChange={(_, d) => { if (!d.open && !busy) setDeleteTarget(null); }}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>删除子分组</DialogTitle>
+            <DialogContent>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
+                <Caption1>{`确定删除子分组「${deleteTarget?.name ?? ''}」？`}</Caption1>
+                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                  删除只影响这个分组本身，名单里的学生不受影响；被场次引用的分组不能删除，请先调整那些场次的发布受众。
+                </Caption1>
+                {deleteError && (
+                  <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
+                    <MessageBarBody>{deleteError}</MessageBarBody>
+                  </MessageBar>
+                )}
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setDeleteTarget(null)} disabled={busy}>取消</Button>
+              <Button
+                appearance="primary"
+                className={danger.solid}
+                icon={<Delete24Regular />}
+                disabled={busy}
+                onClick={() => void handleDelete()}
+              >
+                {busy ? '删除中…' : '确认删除'}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      {/* 成员维护：全量替换，候选来自完整名单（与搜索框无关） */}
+      <Dialog open={membersTarget !== null} onOpenChange={(_, d) => { if (!d.open && !busy) setMembersTarget(null); }}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>{`子分组成员${membersTarget ? `：${membersTarget.name}` : ''}`}</DialogTitle>
+            <DialogContent>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
+                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                  勾选要放进该子分组的学生，保存时按勾选结果整体覆盖；全部取消勾选即清空成员。只有当前名单里的学生可选。
+                </Caption1>
+
+                {membersError && (
+                  <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
+                    <MessageBarBody>{membersError}</MessageBarBody>
+                  </MessageBar>
+                )}
+
+                <Field label="筛选">
+                  <Input
+                    value={memberFilter}
+                    onChange={(_, d) => setMemberFilter(d.value)}
+                    placeholder="按学号或姓名筛选"
+                  />
+                </Field>
+
+                {membersLoading ? (
+                  <Spinner label="正在读取名单…" />
+                ) : memberCandidates.length === 0 ? (
+                  <Text size={200} style={{ color: t.colorNeutralForeground3 }}>
+                    你的名单里还没有学生，先去添加学生或请管理员分配可教组别。
+                  </Text>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS, maxHeight: '48vh', overflowY: 'auto' }}>
+                    {visibleCandidates.map((s) => (
+                      <Checkbox
+                        key={s.id}
+                        checked={memberPicked.includes(s.id)}
+                        disabled={busy}
+                        onChange={(_, d) => toggleMember(s.id, Boolean(d.checked))}
+                        label={`${s.username}　${s.display_name}`}
+                      />
+                    ))}
+                    {visibleCandidates.length === 0 && (
+                      <Caption1 style={{ color: t.colorNeutralForeground3 }}>没有匹配的学生。</Caption1>
+                    )}
+                  </div>
+                )}
+
+                <Caption1 style={{ color: t.colorNeutralForeground3 }}>{`已勾选 ${memberPicked.length} 人。`}</Caption1>
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setMembersTarget(null)} disabled={busy}>取消</Button>
               <Button
                 appearance="primary"
                 icon={<PeopleTeam24Regular />}
-                disabled={busy || pickedCount === 0}
-                onClick={() => void handlePull()}
+                disabled={busy || membersLoading}
+                onClick={() => void handleMembersSubmit()}
               >
-                {busy ? '拉取中…' : `确认拉入${pickedCount > 0 ? `（${pickedCount} 人）` : ''}`}
+                {busy ? '保存中…' : '保存成员'}
               </Button>
             </DialogActions>
           </DialogBody>
@@ -489,7 +721,7 @@ export function TeacherStudentList() {
             <DialogContent>
               <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
                 <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-                  用于转学生、旁听生这类还不在你可教班级里的情况。
+                  用于转学生、旁听生这类还不在你可教组别里的情况。
                   这里要的是学生的系统 ID（一个纯数字，<b>不是学号</b>），来自管理员的「学生管理」列表里的学生 ID，需要的话请找管理员要。
                   可以一次给多个，用逗号或空格分隔。
                 </Caption1>
@@ -529,18 +761,21 @@ export function TeacherStudentList() {
         </DialogSurface>
       </Dialog>
 
-      {/* BD-05：移出名单只断开「我教这个学生」的关系，历史提交与成绩保留。 */}
+      {/* BD-05 + 0.3.2 F1：只移手动添加的学生，历史提交与成绩保留 */}
       <Dialog open={unbindOpen} onOpenChange={(_, d) => { if (!busy) setUnbindOpen(d.open); }}>
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>移出我的名单</DialogTitle>
+            <DialogTitle>移出手动添加的学生</DialogTitle>
             <DialogContent>
               <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
                 <Caption1>
-                  确定把选中的 {unbindCount} 名学生移出我的名单？移出后你看不到他们的新提交，也不能再给他们放题。
+                  {`确定把选中的 ${selectedCount} 名学生移出我的名单？移出后你看不到他们的新提交，也不能再给他们放题。`}
                 </Caption1>
                 <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-                  学生账号本身、以及他们已有的提交与成绩都保留，仍在你的成绩页可见范围内；再把他们拉回来即可恢复。
+                  学生账号本身、以及他们已有的提交与成绩都保留，仍在你的成绩页可见范围内；再按学生 ID 添加回来即可恢复。
+                </Caption1>
+                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                  来自可教组别的学生不能在这里移出，需由管理员撤销相应组别。
                 </Caption1>
               </div>
             </DialogContent>

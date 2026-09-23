@@ -22,6 +22,7 @@ import type { Role } from '../api/types';
 import { useSettings, useThemeMode } from '../context';
 import { BackgroundLayers, resolveBgUrl } from './BackgroundLayers';
 import { CHANGE_PASSWORD_PATH, roleHome, useAuthUser } from './Guard';
+import { TeacherNoticeDialog } from './TeacherNoticeDialog';
 
 const NAV_LINKS: Record<Role, { to: string; label: string }[]> = {
   student: [{ to: '/student/assignments', label: '我的场次' }],
@@ -165,6 +166,8 @@ export function Layout() {
           青蓝 QingLan · C 语言练习与测评平台
         </Text>
       </footer>
+
+      {user?.role === 'teacher' && !mustChange && <TeacherNoticeDialog />}
     </div>
   );
 }

@@ -72,7 +72,7 @@ export interface BoundStudentItem {
 
 /**
  * BD-03：可教组（`teacher_groups` 过滤后的行政班）里的一名成员。
- * `bound` = 已在自己的学生名单中，前端据此把「拉入」按钮置灰。
+ * `bound` 为 0.3.1 遗留字段：当时用于把「拉入」按钮置灰，0.3.2 F1 下线「从班级拉学生」后前端不再消费。
  */
 export interface ClassStudentItem {
   id: number;
@@ -88,6 +88,34 @@ export interface ClassItem {
   name: string;
   member_count: number;
   students: ClassStudentItem[];
+}
+
+/* ---------- teacher: 子分组与一次性提示（0.3.2 F1） ---------- */
+
+/**
+ * B1：教师私有的子分组（只用于收窄发布受众）。
+ * `student_ids` / `member_count` 均按「当前名单口径」过滤——组别被管理员撤销的学生不再计入。
+ */
+export interface SubgroupItem {
+  id: number;
+  name: string;
+  created_at: string;
+  member_count: number;
+  student_ids: number[];
+}
+
+/** B1：`GET /teacher/notices/pending` 的一条待处理提示（目前只有组别被撤销）。 */
+export interface TeacherNoticeItem {
+  id: number;
+  kind: string | null;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+}
+
+/** B1：`kind='group_revoked'` 的 payload——被撤销的组与各组离开名单的人数。 */
+export interface GroupRevokedNotice {
+  groups: { id: number; name: string; lost_count: number }[];
+  total_lost: number;
 }
 
 /** 组成员批量写入的返回体，对应后端 GroupMembershipOut。 */
@@ -314,6 +342,8 @@ export interface CaseBody {
 
 export type AssignmentMode = 'homework' | 'test';
 export type ScorePolicy = 'best' | 'last';
+/** B1 发布受众：all = 全部名单（缺省，与老数据行为一致）；subgroup = 仅指定子分组。 */
+export type AudienceMode = 'all' | 'subgroup';
 export type SubmissionStatus = 'pending' | 'judging' | 'done' | 'failed';
 export type Verdict = 'AC' | 'WA' | 'TLE' | 'MLE' | 'RE' | 'CE';
 
@@ -347,6 +377,10 @@ export interface AssignmentBody {
   end_time: string;
   max_submissions: number | null;
   score_policy: ScorePolicy;
+  /** 受众模式；`'subgroup'` 时必须给出至少一个 `subgroup_ids`。 */
+  audience_mode: AudienceMode;
+  /** 受众子分组白名单；`audience_mode='all'` 时上送空数组。 */
+  subgroup_ids: number[];
   problems: AssignmentProblemRef[];
 }
 
