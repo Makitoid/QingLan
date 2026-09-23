@@ -439,4 +439,6 @@ class TestTeacherRosterSearch:
         # BoundStudentOut 的字段全集（含 LI-02 徽标与层 1 组别）
         resp = client.get("/api/teacher/students", headers=h_teacher).json()
         assert set(resp[0]) == {"id", "username", "display_name", "is_active",
-                                "must_change_password", "groups"}
+                                "must_change_password", "groups", "source"}
+        # 层 3 直绑的学生来源为 manual（组别派生的才是 group）
+        assert {r["source"] for r in resp} == {"manual"}

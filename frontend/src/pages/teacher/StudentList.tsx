@@ -141,12 +141,6 @@ export function TeacherStudentList() {
   const classes = useMemo(() => classData ?? [], [classData]);
   const subgroups = useMemo(() => subgroupData ?? [], [subgroupData]);
 
-  /** 我经可教组别拿到的学生 ID：这些学生不能由教师移出名单。 */
-  const groupStudentIds = useMemo(
-    () => new Set(classes.flatMap((cls) => cls.students.map((s) => s.id))),
-    [classes],
-  );
-
   // 换了一批行就清选择，否则残留的选中态指向已经看不见的行（§8.1 约定）。
   useEffect(() => {
     setSelectedIds(new Set());
@@ -161,7 +155,7 @@ export function TeacherStudentList() {
 
   const selectedRows = students.filter((s) => selectedIds.has(s.id));
   const selectedCount = selectedRows.length;
-  const selectedDerivedCount = selectedRows.filter((s) => groupStudentIds.has(s.id)).length;
+  const selectedDerivedCount = selectedRows.filter((s) => s.source === 'group').length;
 
   const idTokens = idText.split(ID_SEPARATOR).map((x) => x.trim()).filter(Boolean);
   const idBadTokens = idTokens.filter((x) => !/^\d+$/.test(x));
@@ -395,7 +389,7 @@ export function TeacherStudentList() {
       {!!classError && (
         <MessageBar intent="warning" style={{ borderRadius: tokens.borderRadiusMedium }}>
           <MessageBarBody>
-            {`可教组别暂时读不到，下表的「来源」列可能不准：${errMessage(classError)}`}
+            {`可教组别（只读徽标）暂时读不到：${errMessage(classError)}`}
           </MessageBarBody>
           <MessageBarActions>
             <Button size="small" appearance="subtle" onClick={reloadClasses}>重试</Button>
@@ -552,7 +546,7 @@ export function TeacherStudentList() {
                               )
                           )}
                           {columnId === 'source' && (
-                            groupStudentIds.has(item.id)
+                            item.source === 'group'
                               ? <Badge appearance="outline" size="large">可教组别</Badge>
                               : <Badge appearance="tint" size="large">手动添加</Badge>
                           )}

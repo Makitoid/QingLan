@@ -599,6 +599,7 @@ def list_bound_students(q: str | None = None,
             if keyword in s.username.lower() or keyword in (s.display_name or "").lower()
         ]
     group_map = groups_svc.groups_map_for_students(db, [s.id for s in students])
+    manual_ids = groups_svc.manual_student_ids(db, teacher.id)
     return [
         schemas.BoundStudentOut(
             id=s.id,
@@ -607,6 +608,7 @@ def list_bound_students(q: str | None = None,
             is_active=s.is_active,
             must_change_password=bool(s.must_change_password),
             groups=group_map.get(s.id, []),
+            source="manual" if s.id in manual_ids else "group",
         )
         for s in students
     ]

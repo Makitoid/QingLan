@@ -68,6 +68,8 @@ export interface BoundStudentItem {
   /** LI-02：未改密徽标。 */
   must_change_password: boolean;
   groups: GroupRef[];
+  /** 0.3.2 F1：manual = 教师按学号添加，group = 由可教组别派生；只有 manual 能被教师移出名单。 */
+  source: 'manual' | 'group';
 }
 
 /**

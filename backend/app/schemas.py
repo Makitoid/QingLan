@@ -159,6 +159,7 @@ class BoundStudentOut(ORMModel):
     is_active: int
     must_change_password: bool = False
     groups: list[GroupRef] = []
+    source: Literal["manual", "group"] = "group"
 
 
 class BatchResetPasswordRequest(BaseModel):
