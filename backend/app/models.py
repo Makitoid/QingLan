@@ -63,6 +63,34 @@ class TeacherGroup(Base):
     created_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))
 
 
+class TeacherSubgroup(Base):
+    """层 3 之上的教师私有子分组（0.3.2 F1）：教师自建，用于发布受众收窄。
+
+    与层 2 `teacher_groups`（admin 分配的行政班）无关；这里只装教师自己挑的学生。
+    """
+
+    __tablename__ = "teacher_subgroups"
+    __table_args__ = (
+        UniqueConstraint("teacher_id", "name"),
+        Index("idx_teacher_subgroups_teacher", "teacher_id"),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    teacher_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    name = Column(Text, nullable=False)
+    created_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))
+
+
+class TeacherSubgroupMember(Base):
+    """子分组-学生（0.3.2 F1）：成员须在当前名单口径内，由接口侧校验。"""
+
+    __tablename__ = "teacher_subgroup_members"
+    __table_args__ = (Index("idx_teacher_subgroup_members_student", "student_id"),)
+
+    subgroup_id = Column(Integer, ForeignKey("teacher_subgroups.id", ondelete="CASCADE"), primary_key=True)
+    student_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+
+
 class Problem(Base):
     __tablename__ = "problems"
     __table_args__ = (CheckConstraint("compare_mode IN ('exact','trim','float')"),)
@@ -102,6 +130,8 @@ class Assignment(Base):
     __table_args__ = (
         CheckConstraint("mode IN ('homework','test')"),
         CheckConstraint("score_policy IN ('best','last')"),
+        # 发布受众（0.3.2 F1）：'all' = 全部名单（老数据），'subgroup' = 仅指定子分组
+        CheckConstraint("audience_mode IN ('all','subgroup')"),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -113,8 +143,20 @@ class Assignment(Base):
     score_policy = Column(Text, nullable=False, server_default=text("'best'"))
     released = Column(Integer, nullable=False, server_default=text("0"))
     released_at = Column(Text)
+    # 发布受众（0.3.2 F1）：'all' 沿用老行为（全部名单），'subgroup' 只看 assignment_subgroups
+    audience_mode = Column(Text, nullable=False, server_default=text("'all'"))
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))
+
+
+class AssignmentSubgroup(Base):
+    """场次-子分组（0.3.2 F1）：audience_mode = 'subgroup' 时的白名单。"""
+
+    __tablename__ = "assignment_subgroups"
+    __table_args__ = (Index("idx_assignment_subgroups_subgroup", "subgroup_id"),)
+
+    assignment_id = Column(Integer, ForeignKey("assignments.id", ondelete="CASCADE"), primary_key=True)
+    subgroup_id = Column(Integer, ForeignKey("teacher_subgroups.id", ondelete="CASCADE"), primary_key=True)
 
 
 class AssignmentProblem(Base):
@@ -182,6 +224,23 @@ class AuditLog(Base):
     target_id = Column(Integer)
     detail = Column(Text)
     created_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))
+
+
+class TeacherNotice(Base):
+    """教师端一次性提示（0.3.2 F1）：如管理端撤销组别导致学生离开名单。
+
+    dismissed_at 非空即视为已读；pending 查询走 (teacher_id, dismissed_at)。
+    """
+
+    __tablename__ = "teacher_notices"
+    __table_args__ = (Index("idx_teacher_notices_teacher_dismissed", "teacher_id", "dismissed_at"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    teacher_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    kind = Column(Text)
+    payload = Column(Text)
+    created_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))
+    dismissed_at = Column(Text)
 
 
 class SiteSetting(Base):
