@@ -35,14 +35,17 @@ export function StudentAssignmentDetail() {
           <>
             <Badge appearance="outline" size="large">{data.mode === 'homework' ? '作业' : '测试'}</Badge>
             <Badge
+              className="ql-badge-status"
               size="large"
               style={
-                data.state === 'ongoing'
-                  ? { color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }
-                  : { color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }
+                data.state === 'ended'
+                  ? { color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }
+                  : data.state === 'ending'
+                    ? { color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }
+                    : { color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }
               }
             >
-              {data.state === 'ongoing' ? '进行中' : '已结束'}
+              {data.state === 'ended' ? '已结束' : data.state === 'ending' ? '即将结束' : '进行中'}
             </Badge>
           </>
         }

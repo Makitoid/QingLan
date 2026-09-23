@@ -401,7 +401,7 @@ export interface TeacherSubmissionDetail {
 
 /* ---------- student ---------- */
 
-export type AssignmentState = 'ongoing' | 'ended';
+export type AssignmentState = 'ongoing' | 'ending' | 'ended';
 
 export interface StudentAssignmentItem {
   id: number;

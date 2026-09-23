@@ -452,7 +452,7 @@ class StudentAssignmentOut(BaseModel):
     max_submissions: int | None
     score_policy: str
     released: int
-    state: str
+    state: Literal["ongoing", "ending", "ended"]
     my_scores: list[MyProblemScore] = []
 
 

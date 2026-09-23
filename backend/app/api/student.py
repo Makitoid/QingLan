@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Union
 
 from fastapi import APIRouter, Depends
@@ -76,6 +76,14 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
+def _assignment_state(assignment: Assignment, now_s: str) -> str:
+    if now_s > assignment.end_time:
+        return "ended"
+    cutoff = (datetime.strptime(now_s, "%Y-%m-%d %H:%M:%S")
+              + timedelta(hours=config.ENDING_SOON_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+    return "ending" if assignment.end_time <= cutoff else "ongoing"
+
+
 def _bound_teacher_ids(db: Session, student: User):
     return select(TeacherStudent.teacher_id).where(TeacherStudent.student_id == student.id)
 
@@ -138,7 +146,7 @@ def _student_assignment_out(db: Session, student: User, assignment: Assignment) 
         "max_submissions": assignment.max_submissions,
         "score_policy": assignment.score_policy,
         "released": assignment.released,
-        "state": "ongoing" if now_s <= assignment.end_time else "ended",
+        "state": _assignment_state(assignment, now_s),
         "my_scores": _my_scores(db, student, assignment),
     }
 

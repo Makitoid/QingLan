@@ -36,6 +36,9 @@ SUBMIT_COOLDOWN_S = 2
 MAX_CODE_BYTES = 64 * 1024
 CE_STDERR_LIMIT = 4096
 
+# 学生端场次「即将结束」判定窗口（小时）
+ENDING_SOON_HOURS = 3
+
 # ---------- 密码与凭证（0.3.0 批次 PW）----------
 # 新建账号/统一重置的初始密码（PW-01），明文只用于告知，入库仍是 bcrypt
 DEFAULT_INITIAL_PASSWORD = "12345678"
