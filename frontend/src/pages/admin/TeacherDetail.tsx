@@ -268,7 +268,7 @@ export function AdminTeacherDetail() {
           }
         />
         <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-          组别（行政班）的成员由管理员在「学生管理」维护；这里决定该教师**能从哪些组里**拉学生进自己的名单。
+          组别（行政班）的成员由管理员在「学生管理」维护；这里决定该教师<Text weight="bold">能从哪些组里</Text>拉学生进自己的名单。
           保存为全量替换，教师侧已有名单不受影响。
         </Caption1>
         {addedIds.length + removedIds.length > 0 && (
