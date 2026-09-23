@@ -40,7 +40,7 @@
                  SQLite (WAL, backend/data/cg.db)
                     ▲
                     │  领任务循环
-                 judge worker ──HTTP──▶ go-judge 沙箱 (:5050)
+                 judge worker ──HTTP──▶ go-judge 沙箱 (容器内 :5050)
                                           编译 gcc -std=c11 -O2
                                           逐用例隔离运行
                     ◀── time / memory / status / stdout ──┘
@@ -81,6 +81,8 @@ pwsh scripts/stop-local.ps1       # 全部停止
 | 前端 | http://localhost:5173 |
 | API 文档 | http://127.0.0.1:8000/docs |
 | 沙箱健康检查 | http://127.0.0.1:5050/version |
+
+默认端口落在 Windows 保留段里时，`start-local.ps1` 会自动顺延并把实际端口打印在汇总里（同时写入 `backend/data/dev-ports.json`，前后端都会读它）。
 | 默认管理员 | `admin` / `admin123`（**首次登录会被强制改密**；新建的师生账号统一初始密码 `12345678`） |
 
 手动四终端方式、以及沙箱对 cgroup 命名空间的硬性要求，见 [`部署操作指南.md`](部署操作指南.md) 第一部分。

@@ -1,3 +1,4 @@
+import json
 import os
 from pathlib import Path
 
@@ -13,7 +14,18 @@ CODES_DIR = DATA_DIR / "codes"
 CASES_DIR = DATA_DIR / "cases"
 BG_DIR = DATA_DIR / "bg"
 
-GO_JUDGE_URL = os.environ.get("GO_JUDGE_URL", "http://127.0.0.1:5050")
+# 默认 5050；Windows 会把默认端口整段保留（绑定报 EACCES），start-local.ps1 顺延后的
+# 实际端口记在 data/dev-ports.json 里，手动起 uvicorn / worker 时靠它对上沙箱端口。
+def _dev_port(key: str, default: int) -> int:
+    try:
+        raw = (BASE_DIR / "data" / "dev-ports.json").read_text(encoding="utf-8-sig")
+        port = int(json.loads(raw)[key])
+    except (OSError, ValueError, KeyError, TypeError):
+        return default
+    return port if 0 < port < 65536 else default
+
+
+GO_JUDGE_URL = os.environ.get("GO_JUDGE_URL") or f"http://127.0.0.1:{_dev_port('judge', 5050)}"
 
 COMPILE_TIME_LIMIT_MS = 10_000
 COMPILE_MEMORY_LIMIT_MB = 512
