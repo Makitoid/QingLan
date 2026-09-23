@@ -1,6 +1,6 @@
 import { useTheme } from '../../appTheme';
 import { useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import {
   Badge,
   Button,
@@ -47,7 +47,6 @@ const columns: TableColumnDefinition<TeacherItem>[] = [
 
 export function AdminTeacherList() {
   const t = useTheme();
-  const navigate = useNavigate();
 
   const [search, setSearch] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
@@ -168,9 +167,6 @@ export function AdminTeacherList() {
                         </Button>
                         <Button size="small" appearance="subtle" disabled={busy} onClick={() => void handleToggleActive(item)}>
                           {item.is_active ? '停用' : '启用'}
-                        </Button>
-                        <Button size="small" appearance="subtle" onClick={() => navigate(`/admin/teachers/${item.id}`)}>
-                          详情
                         </Button>
                       </div>
                     )}
