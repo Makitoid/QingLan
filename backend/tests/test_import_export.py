@@ -153,14 +153,26 @@ def _make_teacher(db, username, display_name="教师"):
                          display_name=display_name, must_change_password=0))
 
 
+def _make_problem(db, teacher, title="B题"):
+    return _add(db, Problem(title=title, description="输入两个整数。", input_format="一行两个整数",
+                            output_format="一行一个整数", time_limit_ms=1000,
+                            memory_limit_mb=256, compare_mode="trim", created_by=teacher.id))
+
+
 def _bind(db, teacher, *students):
     for s in students:
         _add(db, TeacherStudent(teacher_id=teacher.id, student_id=s.id))
 
 
-def _submit(db, assignment, student, submitted_at, score=100.0):
-    """submissions.problem_id 有外键约束（PRAGMA foreign_keys=ON），取真实题目 ID。"""
-    problem_id = db.execute(select(Problem.id).order_by(Problem.id)).scalars().first()
+def _submit(db, assignment, student, submitted_at, score=100.0, problem=None):
+    """submissions.problem_id 有外键约束（PRAGMA foreign_keys=ON），取真实题目 ID。
+
+    problem 缺省取题库里 id 最小的题（历史用例都是单题场次）；多题场次显式传入。
+    """
+    if problem is not None:
+        problem_id = problem.id
+    else:
+        problem_id = db.execute(select(Problem.id).order_by(Problem.id)).scalars().first()
     assert problem_id is not None, "用例需带 problem fixture（提交记录要有外键可用的题目）"
     return _add(db, Submission(
         assignment_id=assignment.id, problem_id=problem_id, user_id=student.id,
@@ -822,7 +834,8 @@ class TestExportWorkbook:
 
     def test_drill_link_uses_latest_submission(self, db, client, teacher, teacher_headers,
                                                assignment, problem):
-        # FIX-1：下钻列指向该生最后一次提交；未交学生两字段为 None
+        # F6：调分入口改到逐学生按题页，最新提交按 (submitted_at, id) 逐题取；
+        # 未交学生该题 latest_submission_id 为 None、提交次数 0
         s1 = _make_student(db, "3150", "张三")
         s2 = _make_student(db, "3151", "李四")
         _bind(db, teacher, s1, s2)
@@ -830,6 +843,27 @@ class TestExportWorkbook:
         late = _submit(db, assignment, s1, "2026-05-02 09:30:00", score=70.0)
         assert late.id > early.id
 
+        def problems_of(student):
+            resp = client.get(
+                f"/api/teacher/assignments/{assignment.id}/students/{student.id}/problems",
+                headers=teacher_headers)
+            assert resp.status_code == 200, resp.text
+            return {r["problem_id"]: r for r in resp.json()}
+
+        row = problems_of(s1)[problem.id]
+        assert row["latest_submission_id"] == late.id
+        assert row["submission_count"] == 2
+        assert row["score"] == 70.0
+        assert row["effective_score"] == 70.0
+
+        empty = problems_of(s2)[problem.id]
+        assert empty["latest_submission_id"] is None
+        assert empty["submission_count"] == 0
+        assert empty["score"] is None
+        assert empty["manual_score"] is None
+        assert empty["effective_score"] is None
+
+        # 逐学生表仍保留 last_submission_id（导出与「总分」口径不变），但不再是唯一入口
         listing = {r["username"]: r for r in client.get(
             f"/api/teacher/assignments/{assignment.id}/students",
             headers=teacher_headers).json()}
@@ -837,6 +871,40 @@ class TestExportWorkbook:
         assert listing["3150"]["last_submitted_at"] == "2026-05-02 09:30:00"
         assert listing["3151"]["last_submission_id"] is None
         assert listing["3151"]["last_submitted_at"] is None
+
+    def test_multi_problem_returns_per_problem_submission(self, db, client, teacher, teacher_headers,
+                                                          assignment, problem):
+        # F6 核心：多题场次每题各自返回自己的 latest_submission_id 与有效分
+        second = _make_problem(db, teacher, title="B题")
+        _add(db, AssignmentProblem(assignment_id=assignment.id, problem_id=second.id,
+                                   seq=2, full_score=50.0))
+        s1 = _make_student(db, "3152", "钱七")
+        _bind(db, teacher, s1)
+        a_early = _submit(db, assignment, s1, "2026-07-01 08:00:00", score=80.0, problem=problem)
+        a_late = _submit(db, assignment, s1, "2026-07-01 09:00:00", score=40.0, problem=problem)
+        b_only = _submit(db, assignment, s1, "2026-07-01 07:00:00", score=30.0, problem=second)
+        assert b_only.id > a_early.id
+
+        resp = client.get(
+            f"/api/teacher/assignments/{assignment.id}/students/{s1.id}/problems",
+            headers=teacher_headers)
+        assert resp.status_code == 200, resp.text
+        rows = resp.json()
+        assert [r["problem_id"] for r in rows] == [problem.id, second.id]
+        assert [r["seq"] for r in rows] == [1, 2]
+        assert [r["title"] for r in rows] == [problem.title, "B题"]
+        assert [r["full_score"] for r in rows] == [100.0, 50.0]
+
+        # 第一题两条提交：最新是 a_late（分值来自它），有效分按 best 策略取 80
+        assert rows[0]["submission_count"] == 2
+        assert rows[0]["latest_submission_id"] == a_late.id
+        assert rows[0]["score"] == 40.0
+        assert rows[0]["effective_score"] == 80.0
+        # 第二题只有一条，时间更早但仍是该题自己的最新提交：这正是旧单指针取不到的那题
+        assert rows[1]["submission_count"] == 1
+        assert rows[1]["latest_submission_id"] == b_only.id
+        assert rows[1]["score"] == 30.0
+        assert rows[1]["effective_score"] == 30.0
 
     def test_sheet_title_truncated_to_31_chars(self, db, client, teacher_headers, teacher):
         a = _make_assignment(db, teacher, title="长" * 40)
@@ -926,19 +994,33 @@ class TestExportTimezone:
             "2026-03-04 22:50:30"
 
     def test_last_submission_is_max_utc_time(self, db, client, teacher, teacher_headers,
-                                             assignment):
+                                             assignment, problem):
         s1 = _make_student(db, "3304", "赵六")
         _bind(db, teacher, s1)
-        _submit(db, assignment, s1, "2026-03-05 06:20:30", score=50.0)
-        _submit(db, assignment, s1, "2026-03-05 23:10:00", score=20.0)
+        early = _submit(db, assignment, s1, "2026-03-05 06:20:30", score=50.0)
+        late = _submit(db, assignment, s1, "2026-03-05 23:10:00", score=20.0)
+        assert late.id > early.id
 
+        # F6：逐题页按 (submitted_at, id) 取最新提交（UTC 串字典序即时间序，坑 9）；
+        # 系统分/教师调分随最新一条，有效分仍按 best 策略在该题全部提交上聚合
+        resp = client.get(
+            f"/api/teacher/assignments/{assignment.id}/students/{s1.id}/problems",
+            headers=teacher_headers)
+        assert resp.status_code == 200, resp.text
+        row = resp.json()[0]
+        assert row["latest_submission_id"] == late.id
+        assert row["submission_count"] == 2
+        assert row["score"] == 20.0
+        assert row["effective_score"] == 50.0
+
+        # 导出列不变：最后提交时间取最大 UTC 时间后按 tz_offset 换算
         url = f"/api/teacher/assignments/{assignment.id}/export"
         resp = client.get(url, params={"tz_offset": 480}, headers=teacher_headers)
         assert resp.status_code == 200, resp.text
-        row = next(load_workbook(io.BytesIO(resp.content)).active.iter_rows(
+        export_row = next(load_workbook(io.BytesIO(resp.content)).active.iter_rows(
             min_row=2, values_only=True))
-        assert row[0] == "3304"
-        assert row[6] == "2026-03-06 07:10:00"          # 跨到次日
-        assert float(row[2]) == 2                       # 提交次数
-        assert float(row[3]) == 50.0                    # 最高单题分（best 策略）
-        assert float(row[5]) == 50.0                    # A+B 每题得分列
+        assert export_row[0] == "3304"
+        assert export_row[6] == "2026-03-06 07:10:00"          # 跨到次日
+        assert float(export_row[2]) == 2                       # 提交次数
+        assert float(export_row[3]) == 50.0                    # 最高单题分（best 策略）
+        assert float(export_row[5]) == 50.0                    # A+B 每题得分列

@@ -351,6 +351,23 @@ export interface AssignmentProblemScore {
   effective_score: number | null;
 }
 
+/**
+ * F6：逐学生按题调分页的一行。`score` / `manual_score` 取自该题**最新一条**提交
+ * （调分也只作用于它），`effective_score` 则按本场次计分策略在全部提交上聚合，
+ * 因此 best 策略下可能与最新提交的分数不同。
+ */
+export interface StudentProblemScoreRow {
+  problem_id: number;
+  seq: number;
+  title: string;
+  full_score: number;
+  submission_count: number;
+  latest_submission_id: number | null;
+  score: number | null;
+  manual_score: number | null;
+  effective_score: number | null;
+}
+
 export interface AssignmentStudentRow {
   student_id: number;
   /** 学号（后端 M5 起补充，旧数据可能为空）。 */

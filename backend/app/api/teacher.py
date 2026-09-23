@@ -14,6 +14,7 @@ from ..models import (Assignment, AssignmentProblem, Group, GroupMember,
                       TeacherStudent, TestCase, User)
 from ..services import export as export_svc
 from ..services import groups as groups_svc
+from ..services import scoring
 from ..services import stats, visibility
 from ..services.audit import log_audit
 
@@ -389,6 +390,48 @@ def assignment_students(assignment_id: int,
                         db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
     assignment = _get_owned_assignment(db, teacher, assignment_id)
     return stats.student_rows(db, assignment)
+
+
+@router.get("/assignments/{assignment_id}/students/{student_id}/problems",
+            response_model=list[schemas.StudentProblemScoreOut])
+def assignment_student_problems(assignment_id: int, student_id: int,
+                                db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    assignment = _get_owned_assignment(db, teacher, assignment_id)
+    student = db.get(User, student_id)
+    if student is None or student.role != "student":
+        raise APIError(404, "STUDENT_NOT_FOUND", "学生不存在")
+
+    ordered = stats.assignment_problems_ordered(db, assignment.id)
+    problem_ids = [ap.problem_id for ap in ordered]
+    problems = {p.id: p for p in db.execute(
+        select(Problem).where(Problem.id.in_(problem_ids))
+    ).scalars()} if problem_ids else {}
+
+    subs_by_problem: dict[int, list[Submission]] = {}
+    mine = db.execute(
+        select(Submission).where(Submission.assignment_id == assignment.id,
+                                 Submission.user_id == student_id)
+    ).scalars().all()
+    for sub in mine:
+        subs_by_problem.setdefault(sub.problem_id, []).append(sub)
+
+    rows = []
+    for ap in ordered:
+        subs = subs_by_problem.get(ap.problem_id, [])
+        latest = max(subs, key=lambda s: (s.submitted_at or "", s.id), default=None)
+        problem = problems.get(ap.problem_id)
+        rows.append({
+            "problem_id": ap.problem_id,
+            "seq": ap.seq,
+            "title": problem.title if problem else "",
+            "full_score": ap.full_score,
+            "submission_count": len(subs),
+            "latest_submission_id": latest.id if latest else None,
+            "score": latest.score if latest else None,
+            "manual_score": latest.manual_score if latest else None,
+            "effective_score": scoring.aggregate_scores(subs, assignment.score_policy),
+        })
+    return rows
 
 
 @router.get("/assignments/{assignment_id}/export")

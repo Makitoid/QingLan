@@ -34,6 +34,7 @@ import type {
   AssignmentBody,
   AssignmentOverview,
   AssignmentStudentRow,
+  StudentProblemScoreRow,
   TeacherSubmissionDetail,
   StudentAssignmentItem,
   StudentAssignmentDetail,
@@ -370,6 +371,11 @@ export function getAssignmentOverview(id: number): Promise<AssignmentOverview> {
 
 export function getAssignmentStudents(id: number): Promise<AssignmentStudentRow[]> {
   return request<AssignmentStudentRow[]>(`/teacher/assignments/${id}/students`);
+}
+
+/** F6：某生在本场次的逐题成绩与调分口——多题场次每题各有一条可调分记录。 */
+export function getAssignmentStudentProblems(id: number, studentId: number): Promise<StudentProblemScoreRow[]> {
+  return request<StudentProblemScoreRow[]>(`/teacher/assignments/${id}/students/${studentId}/problems`);
 }
 
 /**

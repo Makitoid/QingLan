@@ -27,6 +27,7 @@ import { TeacherAssignmentList } from './pages/teacher/AssignmentList';
 import { TeacherAssignmentNew } from './pages/teacher/AssignmentNew';
 import { TeacherAssignmentOverview } from './pages/teacher/AssignmentOverview';
 import { TeacherAssignmentStudents } from './pages/teacher/AssignmentStudents';
+import { TeacherStudentScores } from './pages/teacher/StudentScores';
 import { TeacherSubmissionPage } from './pages/teacher/SubmissionDetail';
 
 import { AdminTeacherList } from './pages/admin/TeacherList';
@@ -79,6 +80,7 @@ function ThemedApp() {
                   <Route path="/teacher/assignments/new" element={<TeacherAssignmentNew />} />
                   <Route path="/teacher/assignments/:id" element={<TeacherAssignmentOverview />} />
                   <Route path="/teacher/assignments/:id/students" element={<TeacherAssignmentStudents />} />
+                  <Route path="/teacher/assignments/:id/students/:sid" element={<TeacherStudentScores />} />
                   <Route path="/teacher/students" element={<TeacherStudentList />} />
                   <Route path="/teacher/submissions/:sid" element={<TeacherSubmissionPage />} />
                 </Route>

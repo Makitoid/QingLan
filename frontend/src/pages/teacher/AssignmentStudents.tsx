@@ -34,6 +34,10 @@ import { PageHeader } from '../../components/PageHeader';
 const PROBLEM_COL_PREFIX = 'problem:';
 const problemColumnId = (problemId: number) => `${PROBLEM_COL_PREFIX}${problemId}`;
 
+/** F6：逐学生按题调分页路径——行内所有入口（每题得分 / 调分列）都落到这里。 */
+const studentScoresPath = (assignmentId: number, studentId: number) =>
+  `/teacher/assignments/${assignmentId}/students/${studentId}`;
+
 /**
  * 每题列的题单：后端保证每行的 problem_scores 同序（即题单 seq），取第一行推导即可；
  * 没有数据（空表 / 首行无题单）时退回固定列。
@@ -48,6 +52,7 @@ function problemColumnsFor(rows: AssignmentStudentRow[] | null | undefined): Ass
 /**
  * 某题得分单元格。未提交该题（effective_score 为 null）显示**空**，
  * 与导出的 xlsx 一致（那里写空串，见 services/export.py），不写 0 也不写「—」。
+ * F6 起同一单元格同时是逐题调分入口（外层的 Link 由调用处包）。
  */
 function problemCell(item: AssignmentStudentRow, columnId: string): string {
   const problemId = Number(columnId.slice(PROBLEM_COL_PREFIX.length));
@@ -107,7 +112,7 @@ export function TeacherAssignmentStudents() {
     }
     cols.push(
       createTableColumn({ columnId: 'last_submitted_at', renderHeaderCell: () => '最后提交时间' }),
-      createTableColumn({ columnId: 'drill', renderHeaderCell: () => '查看提交 / 调分' }),
+      createTableColumn({ columnId: 'drill', renderHeaderCell: () => '调分' }),
     );
     return cols;
   }, [problemColumns]);
@@ -196,18 +201,17 @@ export function TeacherAssignmentStudents() {
                     {columnId === 'submitted_count' && item.submitted_count}
                     {columnId === 'best' && fmtScore(item.best_effective_score)}
                     {columnId === 'total' && fmtScore(item.total_score)}
-                    {typeof columnId === 'string' &&
-                      columnId.startsWith(PROBLEM_COL_PREFIX) &&
-                      problemCell(item, columnId)}
+                    {typeof columnId === 'string' && columnId.startsWith(PROBLEM_COL_PREFIX) && (
+                      <Link to={studentScoresPath(assignmentId, item.student_id)} style={{ color: t.colorBrandForeground1 }}>
+                        {problemCell(item, columnId)}
+                      </Link>
+                    )}
                     {columnId === 'last_submitted_at' && fmtTime(item.last_submitted_at)}
-                    {columnId === 'drill' &&
-                      (item.last_submission_id ? (
-                        <Link to={`/teacher/submissions/${item.last_submission_id}`} style={{ color: t.colorBrandForeground1 }}>
-                          查看 / 调分
-                        </Link>
-                      ) : (
-                        <Caption1 style={{ color: t.colorNeutralForeground4 }}>—</Caption1>
-                      ))}
+                    {columnId === 'drill' && (
+                      <Link to={studentScoresPath(assignmentId, item.student_id)} style={{ color: t.colorBrandForeground1 }}>
+                        调分
+                      </Link>
+                    )}
                   </DataGridCell>
                 )}
               </DataGridRow>
