@@ -24,6 +24,21 @@ PASSWORD_GUARD_ALLOWLIST = frozenset({
     "/api/settings/bg_image",
 })
 
+WEAK_PASSWORDS = frozenset({
+    "password", "password1", "password123", "passw0rd", "p@ssw0rd", "p@ssword1",
+    "12345678", "123456789", "1234567890", "1234567", "123456", "12345", "987654321",
+    "11111111", "00000000", "88888888", "66666666", "11223344", "123123123",
+    "qwerty", "qwerty123", "qwertyuiop", "qazwsx", "qazwsxedc", "1qaz2wsx",
+    "1q2w3e4r", "1q2w3e4r5t", "zxcvbnm", "asdfghjkl", "asdf1234", "qwe123456",
+    "abc123456", "a1234567", "a123456789", "123qweasd",
+    "iloveyou", "iloveyou123", "woaini1314", "woaini520", "5201314", "1314520",
+    "admin123", "admin888", "admin123456", "root1234", "test1234", "changeme",
+    "letmein", "welcome", "welcome1", "monkey123", "dragon123", "master123",
+    "sunshine", "princess", "football", "baseball", "superman", "trustno1",
+    "secret123", "shadow123", "batman123", "michael123", "jordan123",
+    "qinglan123", "qinglan2026",
+})
+
 
 class APIError(Exception):
     def __init__(self, status_code: int, code: str, message: str):
@@ -77,6 +92,19 @@ def generate_unique_temp_passwords(count: int) -> list[str]:
     return list(picked)
 
 
+def _has_consecutive_run(password: str, length: int = 5) -> bool:
+    """升序或降序码点连续（如 abcd / 4321）达到 length 位即为 True。"""
+    ascending = 1
+    descending = 1
+    for index in range(1, len(password)):
+        delta = ord(password[index]) - ord(password[index - 1])
+        ascending = ascending + 1 if delta == 1 else 1
+        descending = descending + 1 if delta == -1 else 1
+        if ascending >= length or descending >= length:
+            return True
+    return False
+
+
 def validate_new_password(new_password: str, *, username: str, display_name: str = "",
                          old_password: str | None = None) -> None:
     """PW-03：全角色统一的密码规则（强制改密与自助改密共用）。"""
@@ -89,6 +117,15 @@ def validate_new_password(new_password: str, *, username: str, display_name: str
         forbidden.add(old_password)
     if new_password in forbidden:
         raise APIError(422, "PASSWORD_POLICY", "密码不能与学号/用户名、姓名、旧密码或初始密码相同")
+    if not any(ch.isascii() and ch.isalpha() for ch in new_password) or not any(
+            ch.isdigit() for ch in new_password):
+        raise APIError(422, "PASSWORD_POLICY", "密码必须同时包含字母和数字")
+    if len(set(new_password)) <= 2:
+        raise APIError(422, "PASSWORD_POLICY", "密码不能只由少数几种字符重复组成")
+    if _has_consecutive_run(new_password):
+        raise APIError(422, "PASSWORD_POLICY", "密码不能使用连续字符")
+    if new_password.lower() in WEAK_PASSWORDS:
+        raise APIError(422, "PASSWORD_POLICY", "密码过于常见")
 
 
 def temp_password_expires_at(password_updated_at: str | None) -> str | None:

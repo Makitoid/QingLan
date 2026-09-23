@@ -17,6 +17,7 @@ import { setAuth } from '../api/client';
 import { login } from '../api';
 import { errMessage } from '../components/StateViews';
 import { LoginBackdrop } from '../components/LoginBackdrop';
+import { PasswordField } from '../components/PasswordField';
 import { CHANGE_PASSWORD_PATH, roleHome } from '../components/Guard';
 
 export function LoginPage() {
@@ -81,15 +82,14 @@ export function LoginPage() {
               autoFocus
             />
           </Field>
-          <Field label={<Label htmlFor="ql-login-password">密码</Label>}>
-            <Input
-              id="ql-login-password"
-              type="password"
-              value={password}
-              onChange={(_, data) => setPassword(data.value)}
-              placeholder="密码"
-            />
-          </Field>
+          <PasswordField
+            id="ql-login-password"
+            label="密码"
+            value={password}
+            onChange={setPassword}
+            placeholder="密码"
+            autoComplete="current-password"
+          />
           <Button appearance="primary" type="submit" disabled={busy} size="large">
             {busy ? '登录中…' : '登录'}
           </Button>

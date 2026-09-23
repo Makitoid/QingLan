@@ -6,9 +6,6 @@ import {
   Card,
   CardHeader,
   Caption1,
-  Field,
-  Input,
-  Label,
   MessageBar,
   MessageBarBody,
   Text,
@@ -19,6 +16,7 @@ import { changePassword, getMe } from '../api';
 import { updateStoredUser } from '../api/client';
 import { errMessage } from '../components/StateViews';
 import { PageHeader } from '../components/PageHeader';
+import { PasswordField } from '../components/PasswordField';
 import { PASSWORD_MIN_LENGTH, PASSWORD_RULES_TEXT, validateNewPassword } from '../components/passwordPolicy';
 import { roleHome, useAuthUser } from '../components/Guard';
 
@@ -127,34 +125,32 @@ export function ChangePasswordPage() {
               <MessageBarBody>{error}</MessageBarBody>
             </MessageBar>
           )}
-          <Field label={<Label htmlFor="ql-cp-old">当前密码</Label>} required>
-            <Input
-              id="ql-cp-old"
-              type="password"
-              value={oldPassword}
-              onChange={(_, d) => setOldPassword(d.value)}
-              autoComplete="current-password"
-              autoFocus
-            />
-          </Field>
-          <Field label={<Label htmlFor="ql-cp-new">新密码</Label>} required hint={PASSWORD_RULES_TEXT}>
-            <Input
-              id="ql-cp-new"
-              type="password"
-              value={newPassword}
-              onChange={(_, d) => setNewPassword(d.value)}
-              autoComplete="new-password"
-            />
-          </Field>
-          <Field label={<Label htmlFor="ql-cp-confirm">确认新密码</Label>} required>
-            <Input
-              id="ql-cp-confirm"
-              type="password"
-              value={confirm}
-              onChange={(_, d) => setConfirm(d.value)}
-              autoComplete="new-password"
-            />
-          </Field>
+          <PasswordField
+            id="ql-cp-old"
+            label="当前密码"
+            value={oldPassword}
+            onChange={setOldPassword}
+            autoComplete="current-password"
+            required
+            autoFocus
+          />
+          <PasswordField
+            id="ql-cp-new"
+            label="新密码"
+            value={newPassword}
+            onChange={setNewPassword}
+            autoComplete="new-password"
+            required
+            hint={PASSWORD_RULES_TEXT}
+          />
+          <PasswordField
+            id="ql-cp-confirm"
+            label="确认新密码"
+            value={confirm}
+            onChange={setConfirm}
+            autoComplete="new-password"
+            required
+          />
           <Caption1 style={{ color: t.colorNeutralForeground3 }}>
             新密码长度至少 {PASSWORD_MIN_LENGTH} 位，且不能包含空格。
           </Caption1>

@@ -113,6 +113,37 @@ class TestPasswordPolicy:
         validate_new_password("GoodPass2026", username="s001", display_name="小明",
                               old_password="OldPass123")
 
+    @pytest.mark.parametrize("candidate", [
+        "PasswordOnly",     # 纯字母，缺数字
+        "90817263",         # 纯数字，缺字母
+        "aaaaaaa1",         # 只有两种字符且大量重复
+        "12345678",         # 统一初始密码（同时也是连续升序串）
+        "password",         # 常见弱密码表
+        "abcdefgh1",        # 连续升序串
+    ])
+    def test_weak_rejected(self, candidate):
+        with pytest.raises(Exception) as err:
+            validate_new_password(candidate, username="s001", display_name="小明",
+                                  old_password="OldPass123")
+        assert err.value.code == "PASSWORD_POLICY"
+
+    def test_weak_messages(self):
+        cases = {
+            "PasswordOnly": "密码必须同时包含字母和数字",
+            "aaaaaaa1": "密码不能只由少数几种字符重复组成",
+            "abcdefgh1": "密码不能使用连续字符",
+            "password1": "密码过于常见",
+        }
+        for candidate, message in cases.items():
+            with pytest.raises(Exception) as err:
+                validate_new_password(candidate, username="s001", display_name="小明",
+                                      old_password="OldPass123")
+            assert err.value.message == message
+
+    def test_accepts_strong_candidate(self):
+        validate_new_password("Ql2026abc", username="s001", display_name="小明",
+                              old_password="OldPass123")
+
 
 # ---------- 3. PW-02 强制改密拦截 ----------
 
