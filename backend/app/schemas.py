@@ -432,6 +432,7 @@ class StudentRowOut(BaseModel):
     total_score: float = 0.0
     problem_scores: list[StudentProblemScoreOut] = []
     last_submitted_at: str | None = None
+    last_submission_id: int | None = None
 
 
 class MyProblemScore(BaseModel):

@@ -48,7 +48,6 @@ const rosterColumns: TableColumnDefinition<StudentItem>[] = [
   createTableColumn({ columnId: 'username', renderHeaderCell: () => '学号' }),
   createTableColumn({ columnId: 'display_name', renderHeaderCell: () => '姓名' }),
   createTableColumn({ columnId: 'groups', renderHeaderCell: () => '组别' }),
-  createTableColumn({ columnId: 'password', renderHeaderCell: () => '改密状态' }),
   createTableColumn({ columnId: 'is_active', renderHeaderCell: () => '状态' }),
 ];
 
@@ -345,11 +344,6 @@ export function AdminTeacherDetail() {
                                 ))}
                               </div>
                             )
-                        )}
-                        {columnId === 'password' && (
-                          item.must_change_password
-                            ? <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteDarkOrangeForeground1, backgroundColor: t.colorPaletteDarkOrangeBackground2 }}>未改密</Badge>
-                            : <Badge className="ql-badge-status" appearance="outline" size="large">已改密</Badge>
                         )}
                         {columnId === 'is_active' && (
                           item.is_active

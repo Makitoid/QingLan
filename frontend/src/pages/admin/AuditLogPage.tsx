@@ -131,6 +131,7 @@ function summarizeDetail(detail: Record<string, unknown> | null): string {
 const columns: TableColumnDefinition<AuditLogItem>[] = [
   createTableColumn({ columnId: 'created_at', renderHeaderCell: () => '时间' }),
   createTableColumn({ columnId: 'actor', renderHeaderCell: () => '操作者' }),
+  createTableColumn({ columnId: 'actor_id', renderHeaderCell: () => '操作者 ID' }),
   createTableColumn({ columnId: 'action', renderHeaderCell: () => '动作' }),
   createTableColumn({ columnId: 'target_type', renderHeaderCell: () => '对象类型' }),
   createTableColumn({ columnId: 'target_id', renderHeaderCell: () => '对象 ID' }),
@@ -254,6 +255,7 @@ export function AuditLogPage() {
               icon={loading ? <Spinner size="tiny" /> : <ArrowSync24Regular />}
               disabled={loading}
               onClick={() => setTick((x) => x + 1)}
+              style={{ alignSelf: 'flex-end' }}
             >
               刷新
             </Button>
@@ -301,26 +303,16 @@ export function AuditLogPage() {
                         </Caption1>
                       )}
                       {columnId === 'actor' && (
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          <Text size={300}>{item.actor_name || '（已删除账号）'}</Text>
-                          {item.actor_id !== null && (
-                            <Caption1 style={{ color: t.colorNeutralForeground4 }}>ID {item.actor_id}</Caption1>
-                          )}
-                        </div>
+                        <Text size={300}>{item.actor_name || '（已删除账号）'}</Text>
                       )}
+                      {columnId === 'actor_id' && (item.actor_id === null ? '—' : item.actor_id)}
                       {columnId === 'action' && (
-                        <div style={{ display: 'flex', flexDirection: 'column' }}>
-                          <Badge appearance="tint" size="large" style={{ alignSelf: 'flex-start' }}>
-                            {ACTION_LABELS[item.action] ?? item.action}
-                          </Badge>
-                          <Caption1 style={{ color: t.colorNeutralForeground4 }}>{item.action}</Caption1>
-                        </div>
+                        <Badge appearance="tint" size="large" style={{ alignSelf: 'flex-start' }}>
+                          {ACTION_LABELS[item.action] ?? item.action}
+                        </Badge>
                       )}
                       {columnId === 'target_type' && (
-                        <>
-                          {TARGET_LABELS[item.target_type] ?? item.target_type}
-                          <Caption1 style={{ color: t.colorNeutralForeground4 }}> {item.target_type}</Caption1>
-                        </>
+                        TARGET_LABELS[item.target_type] ?? item.target_type
                       )}
                       {columnId === 'target_id' && (item.target_id === null ? '—' : item.target_id)}
                       {columnId === 'detail' && (

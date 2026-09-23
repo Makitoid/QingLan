@@ -61,7 +61,6 @@ const columns: TableColumnDefinition<BoundStudentItem>[] = [
   createTableColumn({ columnId: 'username', renderHeaderCell: () => '学号' }),
   createTableColumn({ columnId: 'display_name', renderHeaderCell: () => '姓名' }),
   createTableColumn({ columnId: 'groups', renderHeaderCell: () => '组别' }),
-  createTableColumn({ columnId: 'password', renderHeaderCell: () => '改密状态' }),
   createTableColumn({ columnId: 'is_active', renderHeaderCell: () => '状态' }),
 ];
 
@@ -336,7 +335,6 @@ export function TeacherStudentList() {
         {debouncedQ
           ? `关键词「${debouncedQ}」在当前名单里匹配 ${students.length} 名学生（后端搜索，共多少条以清空搜索为准）。`
           : `共 ${students.length} 名学生在你的名单里。`}
-        {' '}出现「未改密」徽标，说明该生还在用统一初始密码，请提醒其尽快登录改密。
       </Caption1>
 
       {students.length === 0 ? (
@@ -384,11 +382,6 @@ export function TeacherStudentList() {
                             ))}
                           </div>
                         )
-                    )}
-                    {columnId === 'password' && (
-                      item.must_change_password
-                        ? <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteDarkOrangeForeground1, backgroundColor: t.colorPaletteDarkOrangeBackground2 }}>未改密</Badge>
-                        : <Badge className="ql-badge-status" appearance="outline" size="large">已改密</Badge>
                     )}
                     {columnId === 'is_active' && (
                       item.is_active

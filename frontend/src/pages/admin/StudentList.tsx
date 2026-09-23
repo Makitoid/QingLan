@@ -72,15 +72,11 @@ const BATCH_RESET_ASK_THRESHOLD = 20;
 /** 搜索输入去抖，避免每敲一个字就打一次 `/admin/students?q=`。 */
 const SEARCH_DEBOUNCE_MS = 300;
 
-/** 改密状态筛选下拉的取值：'' = 不筛选。 */
-type PasswordFilter = '' | '1' | '0';
-
 const columns: TableColumnDefinition<StudentItem>[] = [
   createTableColumn({ columnId: 'username', renderHeaderCell: () => '学号' }),
   createTableColumn({ columnId: 'display_name', renderHeaderCell: () => '姓名' }),
   createTableColumn({ columnId: 'groups', renderHeaderCell: () => '分组' }),
   createTableColumn({ columnId: 'teachers', renderHeaderCell: () => '归属教师' }),
-  createTableColumn({ columnId: 'password', renderHeaderCell: () => '改密状态' }),
   createTableColumn({ columnId: 'is_active', renderHeaderCell: () => '状态' }),
   createTableColumn({ columnId: 'actions', renderHeaderCell: () => '操作' }),
 ];
@@ -88,11 +84,10 @@ const columns: TableColumnDefinition<StudentItem>[] = [
 export function AdminStudentList() {
   const t = useTheme();
 
-  // LI-01 / LI-02：搜索、组别、改密状态全部走后端参数（学校规模下搜索优先于分页）。
+  // LI-01 / LI-02：搜索、组别走后端参数（学校规模下搜索优先于分页）。
   const [search, setSearch] = useState('');
   const [debouncedQ, setDebouncedQ] = useState('');
   const [groupFilter, setGroupFilter] = useState('');
-  const [passwordFilter, setPasswordFilter] = useState<PasswordFilter>('');
 
   useEffect(() => {
     const timer = window.setTimeout(() => setDebouncedQ(search.trim()), SEARCH_DEBOUNCE_MS);
@@ -102,14 +97,13 @@ export function AdminStudentList() {
   // 换筛选条件等于换了一批行：不清选择会残留已不可见行的选中态（§8.1 约定）。
   useEffect(() => {
     setSelectedIds(new Set());
-  }, [debouncedQ, groupFilter, passwordFilter]);
+  }, [debouncedQ, groupFilter]);
 
   const groupId = groupFilter ? Number(groupFilter) : null;
-  const mustChange = passwordFilter === '' ? null : passwordFilter === '1';
 
   const { data, error, loading, reload } = useAsync(
-    () => listStudents({ q: debouncedQ, group_id: groupId, must_change: mustChange }),
-    [debouncedQ, groupFilter, passwordFilter],
+    () => listStudents({ q: debouncedQ, group_id: groupId }),
+    [debouncedQ, groupFilter],
   );
   const { data: groupData, reload: reloadGroups } = useAsync(listGroups, []);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -343,18 +337,6 @@ export function AdminStudentList() {
                 </Option>
               ))}
             </Dropdown>
-            <Dropdown
-              placeholder="改密状态"
-              value={passwordFilter === '1' ? '未改密' : passwordFilter === '0' ? '已改密' : ''}
-              selectedOptions={passwordFilter ? [passwordFilter] : []}
-              onOptionSelect={(_, d) => setPasswordFilter(String(d.optionValue ?? '') as PasswordFilter)}
-              disabled={busy}
-              style={{ width: '130px' }}
-            >
-              <Option value="" text="全部状态">全部状态</Option>
-              <Option value="1" text="未改密">未改密</Option>
-              <Option value="0" text="已改密">已改密</Option>
-            </Dropdown>
             <Button appearance="secondary" icon={<PeopleTeam24Regular />} onClick={() => setManageOpen(true)}>
               分组管理
             </Button>
@@ -467,11 +449,6 @@ export function AdminStudentList() {
                       <Caption1 style={{ color: t.colorNeutralForeground3 }}>
                         {item.teachers.length === 0 ? '未绑定' : item.teachers.map((x) => x.display_name).join('、')}
                       </Caption1>
-                    )}
-                    {columnId === 'password' && (
-                      item.must_change_password
-                        ? <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteDarkOrangeForeground1, backgroundColor: t.colorPaletteDarkOrangeBackground2 }}>未改密</Badge>
-                        : <Badge className="ql-badge-status" appearance="outline" size="large">已改密</Badge>
                     )}
                     {columnId === 'is_active' && (
                       item.is_active

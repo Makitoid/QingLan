@@ -107,7 +107,7 @@ export function TeacherAssignmentStudents() {
     }
     cols.push(
       createTableColumn({ columnId: 'last_submitted_at', renderHeaderCell: () => '最后提交时间' }),
-      createTableColumn({ columnId: 'drill', renderHeaderCell: () => '下钻' }),
+      createTableColumn({ columnId: 'drill', renderHeaderCell: () => '查看提交 / 调分' }),
     );
     return cols;
   }, [problemColumns]);
@@ -184,7 +184,7 @@ export function TeacherAssignmentStudents() {
                         <Caption1 style={{ color: t.colorNeutralForeground4 }}>—</Caption1>
                       ))}
                     {columnId === 'name' && (
-                      <Text weight={item.submitted_count === 0 ? 'regular' : 'semibold'}>
+                      <Text>
                         {item.name}
                         {item.submitted_count === 0 && (
                           <Badge size="large" style={{ marginLeft: tokens.spacingHorizontalS, color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
@@ -203,7 +203,7 @@ export function TeacherAssignmentStudents() {
                     {columnId === 'drill' &&
                       (item.last_submission_id ? (
                         <Link to={`/teacher/submissions/${item.last_submission_id}`} style={{ color: t.colorBrandForeground1 }}>
-                          查看提交
+                          查看 / 调分
                         </Link>
                       ) : (
                         <Caption1 style={{ color: t.colorNeutralForeground4 }}>—</Caption1>

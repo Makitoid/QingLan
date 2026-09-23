@@ -148,7 +148,8 @@ def student_rows(db: Session, assignment: Assignment) -> list[dict]:
                 "effective_score": value,
             })
 
-        last_submitted_at = max((s.submitted_at for s in mine), default=None)
+        # submitted_at 为 UTC 文本 YYYY-MM-DD HH:MM:SS，字典序即时间序；同刻以 id 大者为准
+        last = max(mine, key=lambda s: (s.submitted_at or "", s.id), default=None)
         rows.append({
             "student_id": student.id,
             "username": student.username,
@@ -157,6 +158,7 @@ def student_rows(db: Session, assignment: Assignment) -> list[dict]:
             "best_effective_score": best,
             "total_score": round(total, 1),
             "problem_scores": problem_scores,
-            "last_submitted_at": last_submitted_at,
+            "last_submitted_at": last.submitted_at if last else None,
+            "last_submission_id": last.id if last else None,
         })
     return rows

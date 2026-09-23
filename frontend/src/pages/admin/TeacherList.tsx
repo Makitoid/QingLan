@@ -41,7 +41,6 @@ const columns: TableColumnDefinition<TeacherItem>[] = [
   createTableColumn({ columnId: 'username', renderHeaderCell: () => '工号' }),
   createTableColumn({ columnId: 'display_name', renderHeaderCell: () => '姓名' }),
   createTableColumn({ columnId: 'student_count', renderHeaderCell: () => '名单学生数' }),
-  createTableColumn({ columnId: 'password', renderHeaderCell: () => '改密状态' }),
   createTableColumn({ columnId: 'is_active', renderHeaderCell: () => '状态' }),
   createTableColumn({ columnId: 'actions', renderHeaderCell: () => '操作' }),
 ];
@@ -157,11 +156,6 @@ export function AdminTeacherList() {
                       </Link>
                     )}
                     {columnId === 'student_count' && item.student_count}
-                    {columnId === 'password' && (
-                      item.must_change_password
-                        ? <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteDarkOrangeForeground1, backgroundColor: t.colorPaletteDarkOrangeBackground2 }}>未改密</Badge>
-                        : <Badge className="ql-badge-status" appearance="outline" size="large">已改密</Badge>
-                    )}
                     {columnId === 'is_active' && (
                       item.is_active
                         ? <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>启用</Badge>

@@ -820,6 +820,24 @@ class TestExportWorkbook:
             r["username"] for r in listing
         ]
 
+    def test_drill_link_uses_latest_submission(self, db, client, teacher, teacher_headers,
+                                               assignment, problem):
+        # FIX-1：下钻列指向该生最后一次提交；未交学生两字段为 None
+        s1 = _make_student(db, "3150", "张三")
+        s2 = _make_student(db, "3151", "李四")
+        _bind(db, teacher, s1, s2)
+        early = _submit(db, assignment, s1, "2026-05-01 08:00:00", score=50.0)
+        late = _submit(db, assignment, s1, "2026-05-02 09:30:00", score=70.0)
+        assert late.id > early.id
+
+        listing = {r["username"]: r for r in client.get(
+            f"/api/teacher/assignments/{assignment.id}/students",
+            headers=teacher_headers).json()}
+        assert listing["3150"]["last_submission_id"] == late.id
+        assert listing["3150"]["last_submitted_at"] == "2026-05-02 09:30:00"
+        assert listing["3151"]["last_submission_id"] is None
+        assert listing["3151"]["last_submitted_at"] is None
+
     def test_sheet_title_truncated_to_31_chars(self, db, client, teacher_headers, teacher):
         a = _make_assignment(db, teacher, title="长" * 40)
         assert self._book(client, teacher_headers, a, tz_offset=0).sheetnames == ["长" * 31]
