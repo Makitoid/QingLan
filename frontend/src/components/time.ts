@@ -32,3 +32,16 @@ export function toLocalInputValue(utcValue?: string | null): string {
   const d = toDayjs(utcValue);
   return d.isValid() ? d.format('YYYY-MM-DDTHH:mm') : '';
 }
+
+export type WindowPhase = 'not_started' | 'ongoing' | 'ended';
+
+export function windowPhase(start?: string | null, end?: string | null): WindowPhase | null {
+  if (!start || !end) return null;
+  const s = toDayjs(start);
+  const e = toDayjs(end);
+  if (!s.isValid() || !e.isValid()) return null;
+  const now = dayjs.utc();
+  if (now.isBefore(s)) return 'not_started';
+  if (now.isAfter(e)) return 'ended';
+  return 'ongoing';
+}

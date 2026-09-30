@@ -21,6 +21,7 @@ import { useTheme } from '../appTheme';
 import { createGroup, deleteGroup, listGroups, renameGroup } from '../api';
 import type { GroupItem } from '../api/types';
 import { useAsync } from './useAsync';
+import { useDangerStyles } from './dangerStyles';
 import { EmptyView, ErrorView, LoadingView, errCode, errMessage } from './StateViews';
 
 const MAX_NAME_LENGTH = 50;
@@ -52,6 +53,7 @@ export function GroupsManageDialog({ open, onOpenChange, onChanged }: Props) {
 
 function GroupsPanel({ onChanged, onClose }: { onChanged?: () => void; onClose: () => void }) {
   const t = useTheme();
+  const danger = useDangerStyles();
   const { data, error, loading, reload } = useAsync(listGroups, []);
   const [newName, setNewName] = useState('');
   const [editingId, setEditingId] = useState<number | null>(null);
@@ -149,7 +151,8 @@ function GroupsPanel({ onChanged, onClose }: { onChanged?: () => void; onClose: 
       <DialogContent>
         <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
           <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-            分组为全站共享，教师可在自己的学生页调整成员；名称唯一，不超过 {MAX_NAME_LENGTH} 个字。
+            组别（行政班）是全站唯一的组织概念，只有管理员能维护组与组成员；教师只能在自己「可教组别」内拉取学生名单。
+            名称唯一，不超过 {MAX_NAME_LENGTH} 个字。
           </Caption1>
 
           <div style={{ display: 'flex', gap: tokens.spacingHorizontalS, alignItems: 'flex-end' }}>
@@ -262,10 +265,10 @@ function GroupsPanel({ onChanged, onClose }: { onChanged?: () => void; onClose: 
                         </Button>
                         <Button
                           size="small"
-                          appearance="subtle"
+                          appearance="outline"
+                          className={danger.outline}
                           icon={<Delete24Regular />}
                           disabled={busy}
-                          style={{ color: t.colorPaletteRedForeground1 }}
                           onClick={() => void handleDelete(group)}
                         >
                           删除

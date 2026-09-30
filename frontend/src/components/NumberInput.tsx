@@ -17,7 +17,12 @@ export function NumberInput({ value, onValue, min, step, disabled, width = '100%
       step={step}
       disabled={disabled}
       onChange={(_, d) => {
-        if (typeof d.value === 'number' && !Number.isNaN(d.value)) onValue(d.value);
+        if (typeof d.value === 'number' && !Number.isNaN(d.value)) {
+          onValue(d.value);
+          return;
+        }
+        const parsed = Number.parseFloat(String(d.displayValue ?? '').trim());
+        if (!Number.isNaN(parsed)) onValue(parsed);
       }}
       style={{ width }}
     />

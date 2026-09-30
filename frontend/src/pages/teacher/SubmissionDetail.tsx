@@ -109,7 +109,7 @@ export function TeacherSubmissionPage() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL }}>
       <div>
         <Caption1>
-          <Button appearance="subtle" size="small" onClick={() => navigate(`/teacher/assignments/${data.assignment_id}/students`)}>
+          <Button appearance="subtle" size="small" onClick={() => navigate(`/teacher/assignments/${data.assignment_id}/students/${data.user_id}`)}>
             ← 返回逐学生表
           </Button>
         </Caption1>
@@ -232,10 +232,6 @@ export function TeacherSubmissionPage() {
           </DataGrid>
         )}
       </Card>
-
-      <Caption1>
-        <Button appearance="subtle" size="small" onClick={() => navigate(-1)}>← 返回</Button>
-      </Caption1>
     </div>
   );
 }

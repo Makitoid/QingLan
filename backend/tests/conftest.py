@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from app.core.db import SessionLocal, engine
 from app.models import (Assignment, AssignmentProblem, Base, Problem,
                         SiteSetting, Submission, TestCase, User)
+from app.services.audit import invalidate_audit_cache
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
@@ -24,6 +25,7 @@ FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 def db():
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
+    invalidate_audit_cache()
     session = SessionLocal()
     session.add(SiteSetting(id=1, brand_color="#0F6CBD", bg_opacity=0.15))
     session.commit()
@@ -38,14 +40,19 @@ def _add(db: Session, obj):
     return obj
 
 
+# users.must_change_password 的列默认是 1（PW-01：新建账号首登强制改密）。
+# 夹具账号是直接写库的测试数据，不该被 PW-02 的业务拦截挡住，所以显式置 0；
+# 需要「未改密」状态时用 must_change_password=1 单独建。
 @pytest.fixture()
 def teacher(db):
-    return _add(db, User(username="t001", password_hash="x", role="teacher", display_name="王老师"))
+    return _add(db, User(username="t001", password_hash="x", role="teacher",
+                         display_name="王老师", must_change_password=0))
 
 
 @pytest.fixture()
 def student(db):
-    return _add(db, User(username="s001", password_hash="x", role="student", display_name="小明"))
+    return _add(db, User(username="s001", password_hash="x", role="student",
+                         display_name="小明", must_change_password=0))
 
 
 @pytest.fixture()

@@ -1,6 +1,6 @@
 import { useTheme } from '../../appTheme';
 import { Link } from 'react-router-dom';
-import { Badge, Caption1, createTableColumn, DataGrid, DataGridCell, DataGridRow, DataGridHeaderCell, DataGridBody, DataGridHeader, Text, tokens, type TableColumnDefinition } from '@fluentui/react-components';
+import { Badge, Caption1, createTableColumn, DataGrid, DataGridCell, DataGridRow, DataGridHeaderCell, DataGridBody, DataGridHeader, MessageBar, MessageBarBody, MessageBarTitle, Text, tokens, type TableColumnDefinition } from '@fluentui/react-components';
 import { listStudentAssignments } from '../../api';
 import type { StudentAssignmentItem } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
@@ -24,9 +24,26 @@ export function StudentAssignmentList() {
   if (loading) return <LoadingView />;
   if (error) return <ErrorView error={error} onRetry={reload} />;
 
+  const ending = (data ?? []).filter((a) => a.state === 'ending');
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
       <PageHeader title="我的场次" />
+      {ending.length > 0 && (
+        <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
+          <MessageBarBody>
+            <MessageBarTitle>以下场次即将结束，请尽快提交</MessageBarTitle>
+            {ending.map((a) => (
+              <div key={a.id}>
+                <Link to={`/student/assignments/${a.id}`} style={{ color: t.colorBrandForeground1, fontWeight: tokens.fontWeightSemibold }}>
+                  {a.title}
+                </Link>
+                <Caption1 style={{ color: t.colorNeutralForeground3, marginLeft: tokens.spacingHorizontalS }}>剩余时间至 {fmtTime(a.end_time)}</Caption1>
+              </div>
+            ))}
+          </MessageBarBody>
+        </MessageBar>
+      )}
       {data && data.length === 0 ? (
         <EmptyView title="暂无场次" description="老师发布作业或测试后会出现在这里。" />
       ) : (
@@ -58,14 +75,17 @@ export function StudentAssignmentList() {
                     )}
                     {columnId === 'state' && (
                       <Badge
+                        className="ql-badge-status"
                         size="large"
                         style={
-                          item.state === 'ongoing'
-                            ? { color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }
-                            : { color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }
+                          item.state === 'ended'
+                            ? { color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }
+                            : item.state === 'ending'
+                              ? { color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }
+                              : { color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }
                         }
                       >
-                        {item.state === 'ongoing' ? '进行中' : '已结束'}
+                        {item.state === 'ended' ? '已结束' : item.state === 'ending' ? '即将结束' : '进行中'}
                       </Badge>
                     )}
                     {columnId === 'score' &&

@@ -5,6 +5,12 @@ export interface User {
   username: string;
   role: Role;
   display_name: string;
+  /**
+   * PW-02：true 时该账号必须先改密才能继续使用。
+   * 前端在路由级拦截（`Guard.RequirePasswordChanged`），后端业务 API 同时返回 403 MUST_CHANGE_PASSWORD。
+   * `/auth/me` 也带该字段，所以刷新页面能恢复拦截态。
+   */
+  must_change_password: boolean;
 }
 
 export interface LoginResponse {
@@ -31,6 +37,13 @@ export interface SiteSettings {
   bg_image_url_dark: string | null;
   bg_dual: boolean;
   bg_opacity: number;
+  /** 0.3.2 F5：审计总开关；false 时隐藏审计导航并拦截路由，仅此一个布尔下发给匿名访客。 */
+  audit_enabled: boolean;
+}
+
+/** admin 端设置视图：比公开 DTO 多一个保留天数（NULL = 永久保存）。 */
+export interface AdminSettings extends SiteSettings {
+  audit_retention_days: number | null;
 }
 
 /* ---------- groups（学生分组 / 班级，全站共享，管理员维护） ---------- */
@@ -52,7 +65,59 @@ export interface BoundStudentItem {
   username: string;
   display_name: string;
   is_active: boolean;
+  /** LI-02：未改密徽标。 */
+  must_change_password: boolean;
   groups: GroupRef[];
+  /** 0.3.2 F1：manual = 教师按学号添加，group = 由可教组别派生；只有 manual 能被教师移出名单。 */
+  source: 'manual' | 'group';
+}
+
+/**
+ * BD-03：可教组（`teacher_groups` 过滤后的行政班）里的一名成员。
+ * `bound` 为 0.3.1 遗留字段：当时用于把「拉入」按钮置灰，0.3.2 F1 下线「从班级拉学生」后前端不再消费。
+ */
+export interface ClassStudentItem {
+  id: number;
+  username: string;
+  display_name: string;
+  is_active: boolean;
+  bound: boolean;
+}
+
+/** BD-03：`GET /api/teacher/classes` 的一个组（含成员）。 */
+export interface ClassItem {
+  id: number;
+  name: string;
+  member_count: number;
+  students: ClassStudentItem[];
+}
+
+/* ---------- teacher: 子分组与一次性提示（0.3.2 F1） ---------- */
+
+/**
+ * B1：教师私有的子分组（只用于收窄发布受众）。
+ * `student_ids` / `member_count` 均按「当前名单口径」过滤——组别被管理员撤销的学生不再计入。
+ */
+export interface SubgroupItem {
+  id: number;
+  name: string;
+  created_at: string;
+  member_count: number;
+  student_ids: number[];
+}
+
+/** B1：`GET /teacher/notices/pending` 的一条待处理提示（目前只有组别被撤销）。 */
+export interface TeacherNoticeItem {
+  id: number;
+  kind: string | null;
+  payload: Record<string, unknown> | null;
+  created_at: string;
+}
+
+/** B1：`kind='group_revoked'` 的 payload——被撤销的组与各组离开名单的人数。 */
+export interface GroupRevokedNotice {
+  groups: { id: number; name: string; lost_count: number }[];
+  total_lost: number;
 }
 
 /** 组成员批量写入的返回体，对应后端 GroupMembershipOut。 */
@@ -68,6 +133,52 @@ export interface SuccessResult {
 /** 组成员批量写入方向。 */
 export type GroupMembershipAction = 'add' | 'remove';
 
+/* ---------- 密码凭证（PW-04 / PW-06 / PW-09） ---------- */
+
+/**
+ * 重置密码返回的一行凭证（学生与教师同构，教师复用 `student_id` 字段放教师 id）。
+ * `expires_at` 为 UTC 串；null = 不过期（统一/初始密码，PW-05）。
+ */
+export interface TempCredential {
+  student_id: number;
+  username: string;
+  display_name: string;
+  temp_password: string;
+  expires_at: string | null;
+}
+
+/** PW-06：批量重置的两种模式——全员统一初始密码 / 逐生独立随机。 */
+export type BatchResetMode = 'unified' | 'random';
+
+export interface BatchResetResult {
+  mode: BatchResetMode;
+  count: number;
+  credentials: TempCredential[];
+}
+
+/* ---------- 审计日志（AU-05 / AU-06） ---------- */
+
+export interface AuditLogItem {
+  id: number;
+  actor_id: number | null;
+  actor_name: string;
+  action: string;
+  /** 动作中文名由服务端随行下发（0.3.2 F5），前端不再维护第二份字典。 */
+  action_label: string;
+  target_type: string;
+  target_label: string;
+  target_id: number | null;
+  /** 后端存 JSON 文本，出接口时已解成对象；无明细为 null。 */
+  detail: Record<string, unknown> | null;
+  /** UTC 串。 */
+  created_at: string;
+}
+
+export interface AuditLogPage {
+  items: AuditLogItem[];
+  total: number;
+}
+
 /* ---------- admin ---------- */
 
 export interface TeacherItem {
@@ -75,6 +186,8 @@ export interface TeacherItem {
   username: string;
   display_name: string;
   is_active: boolean;
+  /** LI-02：未改密徽标（PW 方案同等适用于教师账号）。 */
+  must_change_password: boolean;
   student_count: number;
 }
 
@@ -83,19 +196,54 @@ export interface StudentItem {
   username: string;
   display_name: string;
   is_active: boolean;
+  /** LI-02：未改密徽标。 */
+  must_change_password: boolean;
   teachers: { id: number; display_name: string }[];
   groups: GroupRef[];
 }
 
+/** LI-01 / LI-02：学生列表的可选筛选参数，全部缺省时行为与旧接口一致。 */
+export interface StudentListQuery {
+  /** 学号 / 姓名模糊匹配。 */
+  q?: string;
+  /** 按组别（行政班）过滤。 */
+  group_id?: number | null;
+  /** true = 只看未改密，false = 只看已改密，undefined = 全部。 */
+  must_change?: boolean | null;
+}
+
+/** BD-02：组-教师分配（可教组别），PUT 为全量替换。 */
+export interface TeacherGroups {
+  teacher_id: number;
+  group_ids: number[];
+}
+
+/** B1：名单学生的来源——教师按学号手动添加，或来自可教组别。 */
+export type RosterSource = 'manual' | 'group';
+
+/** B1：admin 教师详情名单的一名学生，对应后端名单接口的单个条目。 */
+export interface RosterEntry {
+  id: number;
+  username: string;
+  display_name: string;
+  source: RosterSource;
+  /** 含该学生的可教组别名；手动添加且不在任何组里时为空数组。 */
+  group_names: string[];
+}
+
+/** B1：`GET /admin/teachers/{id}/students` 的返回体（可教组别成员并集 ∪ 手动添加）。 */
+export interface TeacherRoster {
+  students: RosterEntry[];
+}
+
+/** PW-01：`AccountCreate` 已去掉 password —— 初始密码由后端统一发放，无需前端填写。 */
 export interface CreateTeacherBody {
   username: string;
-  password: string;
   display_name: string;
 }
 
 export interface CreateStudentBody {
   username: string;
-  password: string;
   display_name: string;
 }
 
@@ -196,6 +344,8 @@ export interface CaseBody {
 
 export type AssignmentMode = 'homework' | 'test';
 export type ScorePolicy = 'best' | 'last';
+/** B1 发布受众：all = 全部名单（缺省，与老数据行为一致）；subgroup = 仅指定子分组。 */
+export type AudienceMode = 'all' | 'subgroup';
 export type SubmissionStatus = 'pending' | 'judging' | 'done' | 'failed';
 export type Verdict = 'AC' | 'WA' | 'TLE' | 'MLE' | 'RE' | 'CE';
 
@@ -229,6 +379,10 @@ export interface AssignmentBody {
   end_time: string;
   max_submissions: number | null;
   score_policy: ScorePolicy;
+  /** 受众模式；`'subgroup'` 时必须给出至少一个 `subgroup_ids`。 */
+  audience_mode: AudienceMode;
+  /** 受众子分组白名单；`audience_mode='all'` 时上送空数组。 */
+  subgroup_ids: number[];
   problems: AssignmentProblemRef[];
 }
 
@@ -252,13 +406,47 @@ export interface AssignmentOverview {
   histogram: HistogramBucket[];
 }
 
+/** SC-01：场次成绩行里「每题的有效分」（未提交为 null）。 */
+export interface AssignmentProblemScore {
+  problem_id: number;
+  seq: number;
+  title: string;
+  full_score: number;
+  effective_score: number | null;
+}
+
+/**
+ * F6：逐学生按题调分页的一行。`score` / `manual_score` 取自该题**最新一条**提交
+ * （调分也只作用于它），`effective_score` 则按本场次计分策略在全部提交上聚合，
+ * 因此 best 策略下可能与最新提交的分数不同。
+ */
+export interface StudentProblemScoreRow {
+  problem_id: number;
+  seq: number;
+  title: string;
+  full_score: number;
+  submission_count: number;
+  latest_submission_id: number | null;
+  score: number | null;
+  manual_score: number | null;
+  effective_score: number | null;
+}
+
 export interface AssignmentStudentRow {
   student_id: number;
   /** 学号（后端 M5 起补充，旧数据可能为空）。 */
   username?: string;
   name: string;
   submitted_count: number;
+  /**
+   * 注意语义是「最高单题分」而非总分（SC-01：后端 stats.py 一直如此）。
+   * 多题场次的总分看 `total_score`，列标题文案统一叫「最高单题分」。
+   */
   best_effective_score: number | null;
+  /** SC-01：Σ 每题有效分。 */
+  total_score: number;
+  /** SC-01：逐题有效分，顺序即题单 seq。 */
+  problem_scores: AssignmentProblemScore[];
   last_submitted_at: string | null;
   last_submission_id?: number | null;
 }
@@ -294,7 +482,7 @@ export interface TeacherSubmissionDetail {
 
 /* ---------- student ---------- */
 
-export type AssignmentState = 'ongoing' | 'ended';
+export type AssignmentState = 'ongoing' | 'ending' | 'ended';
 
 export interface StudentAssignmentItem {
   id: number;

@@ -17,12 +17,38 @@ export function getToken(): string | null {
   return localStorage.getItem(TOKEN_KEY);
 }
 
+/**
+ * 登录态的进程内缓存：localStorage 不是响应式数据源，路由守卫拿它没法在
+ * 「改密成功 / 后端回 403 MUST_CHANGE_PASSWORD」时重新渲染。这里加一层订阅，
+ * `Guard.useAuthUser()` 经 `useSyncExternalStore` 读它，PW-02 的路由级拦截才会即时生效。
+ */
+let cachedUser: User | null = readStoredUser();
+const authListeners = new Set<() => void>();
+
+function emitAuth(): void {
+  authListeners.forEach((listener) => listener());
+}
+
+export function subscribeAuth(listener: () => void): () => void {
+  authListeners.add(listener);
+  return () => {
+    authListeners.delete(listener);
+  };
+}
+
+/** 稳定的快照引用：只在 setAuth / clearAuth / updateStoredUser 时换对象。 */
+export function getCachedUser(): User | null {
+  return cachedUser;
+}
+
 export function setAuth(token: string, user: User): void {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(USER_KEY, JSON.stringify(user));
+  cachedUser = user;
+  emitAuth();
 }
 
-export function getStoredUser(): User | null {
+function readStoredUser(): User | null {
   const raw = localStorage.getItem(USER_KEY);
   if (!raw) return null;
   try {
@@ -32,9 +58,24 @@ export function getStoredUser(): User | null {
   }
 }
 
+export function getStoredUser(): User | null {
+  return cachedUser;
+}
+
+/** 局部更新登录态（如 PW-03 改密成功后清掉 `must_change_password` 拦截标志）。 */
+export function updateStoredUser(patch: Partial<User>): User | null {
+  if (!cachedUser) return null;
+  cachedUser = { ...cachedUser, ...patch };
+  localStorage.setItem(USER_KEY, JSON.stringify(cachedUser));
+  emitAuth();
+  return cachedUser;
+}
+
 export function clearAuth(): void {
   localStorage.removeItem(TOKEN_KEY);
   localStorage.removeItem(USER_KEY);
+  cachedUser = null;
+  emitAuth();
 }
 
 function redirectToLogin(): void {
@@ -114,6 +155,11 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
 
   if (!resp.ok) {
     const body = (data ?? { code: 'UNKNOWN', message: `请求失败（HTTP ${resp.status}）` }) as Partial<ApiErrorBody>;
+    // PW-02：本地登录态落后于服务端时（例如管理员刚重置了密码），业务接口的
+    // 403 MUST_CHANGE_PASSWORD 会把拦截标志补回本地，路由守卫随即跳到改密页。
+    if (resp.status === 403 && body.code === 'MUST_CHANGE_PASSWORD') {
+      updateStoredUser({ must_change_password: true });
+    }
     throw new ApiError(resp.status, {
       code: body.code ?? 'UNKNOWN',
       message: body.message ?? `请求失败（HTTP ${resp.status}）`,

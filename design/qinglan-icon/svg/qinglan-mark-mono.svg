@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="青蓝 QingLan">
+  <!--
+    单色版：无容器，笔画取 currentColor，蓝环以透明度表达"承接"，青笔实心表达"胜出"。
+    用于水印、印章、雕刻、README、以及任何跟随主题色的行内场景（color: var(--token-colorBrandForeground1)）。
+  -->
+  <g fill="none" stroke="currentColor" stroke-linecap="round">
+    <path d="M43.31 33.83 A12.5 12.5 0 1 1 35.275 24.254" stroke-opacity=".5" stroke-width="6.5"/>
+    <path d="M26 33 L28.5 38.5 L47.6 19.3" stroke-width="6.5" stroke-linejoin="round"/>
+  </g>
+</svg>

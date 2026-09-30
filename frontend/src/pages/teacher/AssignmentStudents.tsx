@@ -1,5 +1,5 @@
 import { useTheme } from '../../appTheme';
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import {
   Badge,
@@ -22,21 +22,47 @@ import {
 } from '@fluentui/react-components';
 import { ArrowDownload24Regular } from '@fluentui/react-icons';
 import { exportAssignmentStudents, getAssignmentStudents } from '../../api';
-import type { AssignmentStudentRow } from '../../api/types';
+import type { AssignmentProblemScore, AssignmentStudentRow } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, EmptyView, errMessage } from '../../components/StateViews';
 import { fmtTime } from '../../components/time';
 import { fmtScore } from '../../components/score';
 import { PageHeader } from '../../components/PageHeader';
 
-const columns: TableColumnDefinition<AssignmentStudentRow>[] = [
-  createTableColumn({ columnId: 'username', renderHeaderCell: () => '学号' }),
-  createTableColumn({ columnId: 'name', renderHeaderCell: () => '姓名' }),
-  createTableColumn({ columnId: 'submitted_count', renderHeaderCell: () => '提交次数' }),
-  createTableColumn({ columnId: 'best', renderHeaderCell: () => '最佳有效分' }),
-  createTableColumn({ columnId: 'last_submitted_at', renderHeaderCell: () => '最后提交时间' }),
-  createTableColumn({ columnId: 'drill', renderHeaderCell: () => '下钻' }),
-];
+/** 每题得分列的 id 前缀，列 id 里带 problem_id 以便单元格回查该题的分。 */
+const PROBLEM_COL_PREFIX = 'problem:';
+const problemColumnId = (problemId: number) => `${PROBLEM_COL_PREFIX}${problemId}`;
+
+/** F6：逐学生按题调分页路径——行内所有入口（每题得分 / 调分列）都落到这里。 */
+const studentScoresPath = (assignmentId: number, studentId: number) =>
+  `/teacher/assignments/${assignmentId}/students/${studentId}`;
+
+/**
+ * 每题列的题单：后端保证每行的 problem_scores 同序（即题单 seq），取第一行推导即可；
+ * 没有数据（空表 / 首行无题单）时退回固定列。
+ *
+ * 只有一道题时不出题名列——那一列与「总分」恒等，并排两列反而让教师误读成两个口径。
+ */
+function problemColumnsFor(rows: AssignmentStudentRow[] | null | undefined): AssignmentProblemScore[] {
+  const first = rows?.[0]?.problem_scores ?? [];
+  return first.length > 1 ? [...first].sort((a, b) => a.seq - b.seq) : [];
+}
+
+/**
+ * 某题得分单元格。未提交该题（effective_score 为 null）显示**空**，
+ * 与导出的 xlsx 一致（那里写空串，见 services/export.py），不写 0 也不写「—」。
+ * F6 起同一单元格同时是逐题调分入口（外层的 Link 由调用处包）。
+ */
+function problemCell(item: AssignmentStudentRow, columnId: string): string {
+  const problemId = Number(columnId.slice(PROBLEM_COL_PREFIX.length));
+  const score = item.problem_scores?.find((p) => p.problem_id === problemId)?.effective_score;
+  return score === null || score === undefined ? '' : fmtScore(score);
+}
+
+/** 每题列的列头：只显示考试时的题号（第 N 题），不显示题目标题。 */
+function ProblemHeaderCell({ problem }: { problem: AssignmentProblemScore }) {
+  return <span>第 {problem.seq} 题</span>;
+}
 
 export function TeacherAssignmentStudents() {
   const { id } = useParams();
@@ -49,6 +75,32 @@ export function TeacherAssignmentStudents() {
   );
   const [exporting, setExporting] = useState(false);
   const [exportError, setExportError] = useState<string | null>(null);
+
+  // 列顺序与导出的 xlsx 对齐：学号 | 姓名 | 提交次数 | 最高单题分 | 总分 | 每题得分 | 最后提交时间。
+  // 「总分」紧跟「最高单题分」，教师对照导出时两列相邻；每题列插在它之后、时间列之前。
+  const problemColumns = useMemo(() => problemColumnsFor(data), [data]);
+  const columns = useMemo<TableColumnDefinition<AssignmentStudentRow>[]>(() => {
+    const cols: TableColumnDefinition<AssignmentStudentRow>[] = [
+      createTableColumn({ columnId: 'username', renderHeaderCell: () => '学号' }),
+      createTableColumn({ columnId: 'name', renderHeaderCell: () => '姓名' }),
+      createTableColumn({ columnId: 'submitted_count', renderHeaderCell: () => '提交次数' }),
+      createTableColumn({ columnId: 'best', renderHeaderCell: () => '最高单题分' }),
+      createTableColumn({ columnId: 'total', renderHeaderCell: () => '总分' }),
+    ];
+    for (const problem of problemColumns) {
+      cols.push(
+        createTableColumn({
+          columnId: problemColumnId(problem.problem_id),
+          renderHeaderCell: () => <ProblemHeaderCell problem={problem} />,
+        }),
+      );
+    }
+    cols.push(
+      createTableColumn({ columnId: 'last_submitted_at', renderHeaderCell: () => '最后提交时间' }),
+      createTableColumn({ columnId: 'drill', renderHeaderCell: () => '查看详情' }),
+    );
+    return cols;
+  }, [problemColumns]);
 
   const handleExport = async () => {
     if (exporting) return; // 防重复点击
@@ -76,6 +128,7 @@ export function TeacherAssignmentStudents() {
         </Caption1>
         <PageHeader
           title="逐学生成绩"
+          subtitle="分数口径：「最高单题分」是得分最高的那道题，「总分」是题单内各题有效分之和。"
           actions={
             <Button
               appearance="secondary"
@@ -121,7 +174,7 @@ export function TeacherAssignmentStudents() {
                         <Caption1 style={{ color: t.colorNeutralForeground4 }}>—</Caption1>
                       ))}
                     {columnId === 'name' && (
-                      <Text weight={item.submitted_count === 0 ? 'regular' : 'semibold'}>
+                      <Text>
                         {item.name}
                         {item.submitted_count === 0 && (
                           <Badge size="large" style={{ marginLeft: tokens.spacingHorizontalS, color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
@@ -132,15 +185,18 @@ export function TeacherAssignmentStudents() {
                     )}
                     {columnId === 'submitted_count' && item.submitted_count}
                     {columnId === 'best' && fmtScore(item.best_effective_score)}
+                    {columnId === 'total' && fmtScore(item.total_score)}
+                    {typeof columnId === 'string' && columnId.startsWith(PROBLEM_COL_PREFIX) && (
+                      <Link to={studentScoresPath(assignmentId, item.student_id)} style={{ color: t.colorBrandForeground1 }}>
+                        {problemCell(item, columnId)}
+                      </Link>
+                    )}
                     {columnId === 'last_submitted_at' && fmtTime(item.last_submitted_at)}
-                    {columnId === 'drill' &&
-                      (item.last_submission_id ? (
-                        <Link to={`/teacher/submissions/${item.last_submission_id}`} style={{ color: t.colorBrandForeground1 }}>
-                          查看提交
-                        </Link>
-                      ) : (
-                        <Caption1 style={{ color: t.colorNeutralForeground4 }}>—</Caption1>
-                      ))}
+                    {columnId === 'drill' && (
+                      <Link to={studentScoresPath(assignmentId, item.student_id)} style={{ color: t.colorBrandForeground1 }}>
+                        查看详情
+                      </Link>
+                    )}
                   </DataGridCell>
                 )}
               </DataGridRow>

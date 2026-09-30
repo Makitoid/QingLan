@@ -27,7 +27,7 @@ import { listTeacherAssignments, releaseAssignment } from '../../api';
 import type { AssignmentMode, AssignmentSummary } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, EmptyView, errMessage } from '../../components/StateViews';
-import { fmtTime } from '../../components/time';
+import { fmtTime, windowPhase, type WindowPhase } from '../../components/time';
 import { PageHeader } from '../../components/PageHeader';
 
 /**
@@ -46,10 +46,18 @@ const MODE_TABS: { value: ModeFilter; label: string }[] = [
   { value: 'test', label: MODE_LABEL.test },
 ];
 
+/** 时间窗三态：纯前端按当前 UTC 时刻推导，随每次加载重算。 */
+const PHASE_LABEL: Record<WindowPhase, string> = {
+  not_started: '未开始',
+  ongoing: '进行中',
+  ended: '已结束',
+};
+
 const columns: TableColumnDefinition<AssignmentSummary>[] = [
   createTableColumn({ columnId: 'title', renderHeaderCell: () => '标题' }),
   createTableColumn({ columnId: 'mode', renderHeaderCell: () => '模式' }),
   createTableColumn({ columnId: 'window', renderHeaderCell: () => '时间窗' }),
+  createTableColumn({ columnId: 'phase', renderHeaderCell: () => '状态' }),
   createTableColumn({ columnId: 'policy', renderHeaderCell: () => '计分' }),
   createTableColumn({ columnId: 'released', renderHeaderCell: () => '放分' }),
   createTableColumn({ columnId: 'actions', renderHeaderCell: () => '' }),
@@ -136,6 +144,16 @@ export function TeacherAssignmentList() {
                         {fmtTime(item.start_time)} ~ {fmtTime(item.end_time)}
                       </Caption1>
                     )}
+                    {columnId === 'phase' && (() => {
+                      const phase = windowPhase(item.start_time, item.end_time);
+                      if (!phase) return <Caption1 style={{ color: t.colorNeutralForeground4 }}>—</Caption1>;
+                      const style = phase === 'ongoing'
+                        ? { color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }
+                        : phase === 'not_started'
+                          ? { color: t.colorPaletteBlueForeground2, backgroundColor: t.colorPaletteBlueBackground2 }
+                          : { color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 };
+                      return <Badge className="ql-badge-status" size="large" style={style}>{PHASE_LABEL[phase]}</Badge>;
+                    })()}
                     {columnId === 'policy' && (
                       <Caption1 style={{ color: t.colorNeutralForeground3 }}>
                         {item.score_policy === 'best' ? '取最高' : '取最后'}

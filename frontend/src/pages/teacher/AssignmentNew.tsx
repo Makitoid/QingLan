@@ -13,13 +13,15 @@ import {
   MessageBar,
   MessageBarBody,
   Option,
+  Radio,
+  RadioGroup,
   Text,
   tokens,
 
 } from '@fluentui/react-components';
 import { Send24Regular } from '@fluentui/react-icons';
-import { createAssignment, listTeacherProblems } from '../../api';
-import type { AssignmentMode, ScorePolicy } from '../../api/types';
+import { createAssignment, listTeacherProblems, listTeacherSubgroups } from '../../api';
+import type { AssignmentMode, AudienceMode, ScorePolicy } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, errMessage } from '../../components/StateViews';
 import { toUtcString } from '../../components/time';
@@ -35,6 +37,7 @@ export function TeacherAssignmentNew() {
   const t = useTheme();
   const navigate = useNavigate();
   const { data: problems, error, loading, reload } = useAsync(listTeacherProblems, []);
+  const { data: subgroupData, error: subgroupError } = useAsync(listTeacherSubgroups, []);
 
   const [title, setTitle] = useState('');
   const [mode, setMode] = useState<AssignmentMode>('homework');
@@ -43,11 +46,20 @@ export function TeacherAssignmentNew() {
   const [limitEnabled, setLimitEnabled] = useState(false);
   const [maxSubmissions, setMaxSubmissions] = useState<number>(3);
   const [scorePolicy, setScorePolicy] = useState<ScorePolicy>('best');
+  const [audienceMode, setAudienceMode] = useState<AudienceMode>('all');
+  const [pickedSubgroups, setPickedSubgroups] = useState<number[]>([]);
   const [selected, setSelected] = useState<SelectedProblem[]>([]);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  const subgroups = useMemo(() => subgroupData ?? [], [subgroupData]);
   const selectedIds = useMemo(() => new Set(selected.map((s) => s.problem_id)), [selected]);
+
+  const toggleSubgroup = (subgroupId: number, checked: boolean) => {
+    setPickedSubgroups((prev) => (
+      checked ? [...prev, subgroupId] : prev.filter((id) => id !== subgroupId)
+    ));
+  };
 
   const toggleProblem = (problemId: number, checked: boolean) => {
     setSelected((prev) =>
@@ -65,6 +77,9 @@ export function TeacherAssignmentNew() {
     if (!startTime || !endTime) return setFormError('请选择开始与结束时间');
     if (toUtcString(endTime) <= toUtcString(startTime)) return setFormError('结束时间必须晚于开始时间');
     if (selected.length === 0) return setFormError('请至少选择一道题目');
+    if (audienceMode === 'subgroup' && pickedSubgroups.length === 0) {
+      return setFormError('请至少选择一个子分组作为发布受众');
+    }
 
     setBusy(true);
     try {
@@ -75,6 +90,8 @@ export function TeacherAssignmentNew() {
         end_time: toUtcString(endTime),
         max_submissions: limitEnabled ? maxSubmissions : null,
         score_policy: scorePolicy,
+        audience_mode: audienceMode,
+        subgroup_ids: audienceMode === 'subgroup' ? pickedSubgroups : [],
         problems: selected.map((s, i) => ({ problem_id: s.problem_id, seq: i + 1, full_score: s.full_score })),
       });
       navigate(`/teacher/assignments/${created.id}`, { replace: true });
@@ -161,6 +178,49 @@ export function TeacherAssignmentNew() {
               </div>
             </Field>
           </div>
+
+          <Field label="发布受众">
+            <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
+              <RadioGroup
+                layout="horizontal"
+                value={audienceMode}
+                onChange={(_, d) => setAudienceMode(d.value as AudienceMode)}
+              >
+                <Radio value="all" label="全部名单" />
+                <Radio value="subgroup" label="指定子分组" disabled={subgroups.length === 0} />
+              </RadioGroup>
+
+              {audienceMode === 'all' ? (
+                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                  你名单里的所有学生都能看到本场次。
+                </Caption1>
+              ) : subgroupError ? (
+                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                  {`子分组暂时读不到，本次只能选「全部名单」：${errMessage(subgroupError)}`}
+                </Caption1>
+              ) : subgroups.length === 0 ? (
+                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                  还没有子分组，请先到「学生」页创建，或改选「全部名单」。
+                </Caption1>
+              ) : (
+                <>
+                  <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                    仅勾选的子分组能收到本场次；子分组在「学生」页维护，可随时调整成员。
+                  </Caption1>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalL }}>
+                    {subgroups.map((sg) => (
+                      <Checkbox
+                        key={sg.id}
+                        checked={pickedSubgroups.includes(sg.id)}
+                        onChange={(_, d) => toggleSubgroup(sg.id, Boolean(d.checked))}
+                        label={`${sg.name}（${sg.member_count} 人）`}
+                      />
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          </Field>
         </div>
       </Card>
 

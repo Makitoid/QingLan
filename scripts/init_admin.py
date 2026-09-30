@@ -20,10 +20,12 @@ def main():
             password_hash=hash_password("admin123"),
             role="admin",
             display_name="管理员",
+            # PW-01：种子 admin 同样首登强制改密
+            must_change_password=1,
         )
         db.add(admin)
         db.commit()
-        print("已创建初始账号 admin/admin123，请首次登录后立即修改密码")
+        print("已创建初始账号 admin/admin123，首次登录会被强制修改密码")
     finally:
         db.close()
 

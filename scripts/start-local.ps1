@@ -27,8 +27,14 @@ $JudgeName   = 'qinglan-judge'
 $JudgeImage  = 'qinglan-go-judge:v1.12.3-gcc'
 $ComposeFile = Join-Path $Root 'docker\compose.yml'
 
-$ApiUrl   = 'http://127.0.0.1:8000'
-$JudgeUrl = 'http://127.0.0.1:5050'
+# 默认端口：容器内 go-judge 固定监听 5050，Vite 默认 5173。
+# Windows 上这两个端口常被系统整段保留（绑定报 EACCES 而非"端口被占用"，netstat 查不到占用者），
+# 此时脚本自动顺延到下一个可用端口，实际值打印在汇总里，并写入 $PortFile 供手动起服务时复用。
+$JudgeDefaultPort    = 5050
+$FrontendDefaultPort = 5173
+$PortFile            = Join-Path $Backend 'data\dev-ports.json'
+
+$ApiUrl = 'http://127.0.0.1:8000'
 
 function Write-Step($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
 function Write-Ok($m)   { Write-Host "    [ok] $m" -ForegroundColor Green }
@@ -51,6 +57,57 @@ function Test-DockerDaemon($Docker) {
 function Test-PortListening([int]$Port) {
     $null -ne (Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue |
                Select-Object -First 1)
+}
+
+# WinNAT / Hyper-V 每次开机从 TCP 动态端口池里整段划走的端口，落在其中的端口绑不上
+function Get-ReservedTcpPortRanges {
+    $ranges = @()
+    foreach ($line in (netsh interface ipv4 show excludedportrange protocol=tcp 2>$null)) {
+        if ($line -match '^\s*(\d+)\s+(\d+)') { $ranges += , @([int]$Matches[1], [int]$Matches[2]) }
+    }
+    $ranges
+}
+
+# 真绑一次：同时识别"被进程占用"(EADDRINUSE) 和"被系统保留"(EACCES)
+function Test-PortBindable([int]$Port) {
+    try {
+        $l = [System.Net.Sockets.TcpListener]::New([System.Net.IPAddress]::Loopback, $Port)
+        $l.Start(); $l.Stop()
+        $true
+    } catch { $false }
+}
+
+# 优先默认端口，其次上次实际用过的，再不行就从默认值往上找；保留段整段跳过，不逐个试
+function Resolve-DevPort {
+    param([int]$Default, [int]$Recorded = 0, [int[]]$Avoid = @())
+    foreach ($p in @($Default, $Recorded | Where-Object { $_ -gt 0 } | Select-Object -Unique)) {
+        if ($p -notin $Avoid -and (Test-PortBindable $p)) { return $p }
+    }
+    $ranges = Get-ReservedTcpPortRanges
+    for ($p = $Default + 1; $p -lt 65535; $p++) {
+        if ($p -in $Avoid) { continue }
+        $reserved = $false
+        foreach ($r in $ranges) { if ($p -ge $r[0] -and $p -le $r[1]) { $reserved = $true; break } }
+        if ($reserved) { $p = $r[1] ; continue }
+        if (Test-PortBindable $p) { return $p }
+    }
+    throw "从 $Default 往上找不到可用端口"
+}
+
+# 上次运行实际用的端口；文件可能不存在或是半截 JSON，读不到就按 0 处理
+function Get-RecordedPort([string]$Key) {
+    if (-not (Test-Path $PortFile)) { return 0 }
+    try {
+        $v = [int]((Get-Content $PortFile -Raw | ConvertFrom-Json).$Key)
+        if ($v -gt 0) { $v } else { 0 }
+    } catch { 0 }
+}
+
+function Save-DevPorts([int]$Judge, [int]$Front) {
+    $dir = Split-Path -Parent $PortFile
+    if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+    @{ judge = $Judge; frontend = $Front } | ConvertTo-Json -Compress |
+        Set-Content -Path $PortFile -Encoding utf8NoBOM
 }
 
 # -SkipHttpErrorCheck 是 PowerShell 7 独有，非 2xx 也不抛异常，健康检查因此更简洁
@@ -162,27 +219,63 @@ if ($LASTEXITCODE -ne 0) {
     Write-Skip '判题镜像已存在'
 }
 
+# 端口映射在建容器时就固定了，所以已在跑的容器一律沿用它的端口，不因"与默认值不同"而重建
+function Get-JudgePublishedPort {
+    $v = & $Docker inspect --format '{{(index .HostConfig.PortBindings "5050/tcp" 0).HostPort}}' $JudgeName 2>$null
+    if ($LASTEXITCODE -eq 0 -and $v) { [int]$v } else { 0 }
+}
+
 $running = & $Docker ps -q  -f "name=^$JudgeName`$" 2>$null
 $exists  = & $Docker ps -aq -f "name=^$JudgeName`$" 2>$null
 
+$JudgeHostPort = 0
 if ($running) {
-    Write-Skip '沙箱容器已在运行'
+    $JudgeHostPort = Get-JudgePublishedPort
+    Write-Skip "沙箱容器已在运行 (宿主机 $JudgeHostPort)"
 } elseif ($exists) {
     & $Docker start $JudgeName | Out-Null
-    Write-Ok '已启动既有沙箱容器'
-} else {
-    # --cgroupns=host 必需：cgroup v2 下缺少它，go-judge 会因 "cgroup path is empty" 启动即崩溃
-    & $Docker run -d --name $JudgeName --restart unless-stopped `
-        --privileged --cgroupns=host --shm-size=256m `
-        -p 5050:5050 $JudgeImage | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw '沙箱容器启动失败' }
-    Write-Ok '沙箱容器已创建'
+    if ($LASTEXITCODE -eq 0) {
+        $JudgeHostPort = Get-JudgePublishedPort
+        Write-Ok "已启动既有沙箱容器 (宿主机 $JudgeHostPort)"
+    } else {
+        # 多半是重启后系统的保留段变了，这个容器的端口再也绑不上 -> 删掉换端口重建
+        Write-Note '既有沙箱容器启动失败，删除后换可用端口重建'
+        & $Docker rm -f $JudgeName | Out-Null
+    }
 }
 
+if (-not $JudgeHostPort) {
+    $cand = Resolve-DevPort -Default $JudgeDefaultPort -Recorded (Get-RecordedPort 'judge')
+    $err  = ''
+    for ($try = 1; $try -le 5 -and -not $JudgeHostPort; $try++) {
+        # --cgroupns=host 必需：cgroup v2 下缺少它，go-judge 会因 "cgroup path is empty" 启动即崩溃
+        $err = & $Docker run -d --name $JudgeName --restart unless-stopped `
+            --privileged --cgroupns=host --shm-size=256m `
+            -p "127.0.0.1:${cand}:5050" $JudgeImage 2>&1 | Out-String
+        if ($LASTEXITCODE -eq 0) {
+            $JudgeHostPort = $cand
+        } else {
+            # docker run 端口绑定失败会留下 created 状态的空壳，不删掉下一个端口也起不来
+            & $Docker rm -f $JudgeName 2>$null | Out-Null
+            $cand = Resolve-DevPort -Default ($cand + 1)
+        }
+    }
+    if (-not $JudgeHostPort) { throw "沙箱容器启动失败：$($err.Trim())" }
+
+    Write-Ok "沙箱容器已创建 (宿主机 127.0.0.1:$JudgeHostPort -> 容器 5050)"
+    if ($JudgeHostPort -ne $JudgeDefaultPort) {
+        Write-Note "默认端口 $JudgeDefaultPort 被系统保留，已自动改用 $JudgeHostPort"
+    }
+}
+
+$JudgeUrl = "http://127.0.0.1:$JudgeHostPort"
+# 后端和 worker 是脚本另起窗口跑的，靠这个环境变量跟随实际端口（手动起服务时改读 $PortFile）
+$env:GO_JUDGE_URL = $JudgeUrl
+
 if (Wait-Http "$JudgeUrl/version" 20) {
-    Write-Ok '沙箱健康检查通过 (5050)'
+    Write-Ok "沙箱健康检查通过 ($JudgeHostPort)"
 } else {
-    Write-Note ("沙箱未响应 5050。查看日志： docker logs --tail 50 {0}" -f $JudgeName)
+    Write-Note ("沙箱未响应 $JudgeHostPort。查看日志： docker logs --tail 50 {0}" -f $JudgeName)
 }
 
 # ---------- 3. 后端 API ----------
@@ -213,21 +306,36 @@ if ($worker) {
 }
 
 # ---------- 5. 前端 ----------
-$FrontendUrl = 'http://localhost:5173'
-if (-not $SkipFrontend) {
-    Write-Step '启动前端 (5173)'
-    if (Test-PortListening 5173) {
-        Write-Skip '5173 已被占用，沿用现有前端实例'
+Write-Step '启动前端'
+$RecFrontend = Get-RecordedPort 'frontend'
+if (Test-PortListening $FrontendDefaultPort) {
+    $FrontendPort = $FrontendDefaultPort
+} elseif ($RecFrontend -and (Test-PortListening $RecFrontend)) {
+    $FrontendPort = $RecFrontend                       # 上次顺延后的实例还在跑，别另起一个
+} else {
+    $FrontendPort = Resolve-DevPort -Default $FrontendDefaultPort -Recorded $RecFrontend -Avoid @($JudgeHostPort)
+}
+$FrontendUrl = "http://localhost:$FrontendPort"
+Save-DevPorts -Judge $JudgeHostPort -Front $FrontendPort   # vite.config.ts 读它，必须先写再起
+
+if ($SkipFrontend) {
+    Write-Skip "按参数跳过前端（$FrontendUrl）"
+} elseif (Test-PortListening $FrontendPort) {
+    Write-Skip "$FrontendPort 已被占用，沿用现有前端实例"
+} else {
+    if ($FrontendPort -ne $FrontendDefaultPort) {
+        Write-Note "默认端口 $FrontendDefaultPort 被系统保留，已自动改用 $FrontendPort"
+    }
+    Start-ServiceProcess 'frontend' "Set-Location '$Frontend'; & npm run dev"
+    if (Wait-Http "$FrontendUrl/" 45) {
+        Write-Ok "前端已就绪: $FrontendUrl"
+    } elseif (Wait-Http "http://localhost:$($FrontendPort + 1)/" 5) {
+        $FrontendPort = $FrontendPort + 1
+        $FrontendUrl  = "http://localhost:$FrontendPort"   # Vite 端口被占时会自动顺延
+        Save-DevPorts -Judge $JudgeHostPort -Front $FrontendPort
+        Write-Ok "前端改用 $FrontendUrl"
     } else {
-        Start-ServiceProcess 'frontend' "Set-Location '$Frontend'; & npm run dev"
-        if (Wait-Http 'http://localhost:5173/' 45) {
-            Write-Ok "前端已就绪: $FrontendUrl"
-        } elseif (Wait-Http 'http://localhost:5174/' 5) {
-            $FrontendUrl = 'http://localhost:5174'   # Vite 端口被占时会自动顺延
-            Write-Ok "前端改用 $FrontendUrl"
-        } else {
-            Write-Note $(if ($Headless) { "前端未就绪，看 $LogDir\frontend.out.log" } else { '前端未就绪，看 qinglan-frontend 窗口' })
-        }
+        Write-Note $(if ($Headless) { "前端未就绪，看 $LogDir\frontend.out.log" } else { '前端未就绪，看 qinglan-frontend 窗口' })
     }
 }
 
@@ -240,6 +348,17 @@ Write-Host @"
     沙箱    $JudgeUrl/version
     数据库  $Backend\data\cg.db
     $stopHint
+"@ -ForegroundColor Gray
+
+if ($JudgeHostPort -ne $JudgeDefaultPort -or $FrontendPort -ne $FrontendDefaultPort) {
+    Write-Host @"
+    注意    默认端口 $JudgeDefaultPort / $FrontendDefaultPort 被系统保留段占了，本次实际用
+            沙箱 $JudgeHostPort / 前端 $FrontendPort，已记在 backend\data\dev-ports.json
+            （后端与前端都会自动读它，手动起服务不用额外传端口）
+"@ -ForegroundColor Yellow
+}
+
+Write-Host @"
 
     停止全部：  scripts\stop-local.ps1
     沙箱日志：  docker logs -f $JudgeName

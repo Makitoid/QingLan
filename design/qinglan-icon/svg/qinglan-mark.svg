@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="青蓝 QingLan">
+  <!--
+    青蓝 QingLan · Fluent 2 app icon · "出于蓝"
+    蓝 = 半透明环（教师 / 平台 / 底色），青 = 从环内生出、穿过缺口、越过外沿的实心一笔（学生 / Accepted）。
+    容器为站点 brand_color 的浅色变体（#0F6CBD + 18% 白），四段单色相纵向渐变。
+    几何与 design/qinglan-icon/render.ps1 完全一致；改色请同步 png/ 导出。
+  -->
+  <defs>
+    <linearGradient id="ql-shell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="var(--ql-icon-1, #7DAFDB)"/>
+      <stop offset=".16" stop-color="var(--ql-icon-2, #5898D1)"/>
+      <stop offset=".52" stop-color="var(--ql-icon-3, #3A86C9)"/>
+      <stop offset="1" stop-color="var(--ql-icon-4, #3172AB)"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#ql-shell)"/>
+  <rect x="2.9" y="2.9" width="58.2" height="58.2" rx="14.1" fill="none" stroke="#FFFFFF" stroke-opacity=".30" stroke-width="1.6"/>
+  <!-- 蓝：圆心 (31,36) r=12.5，自 -10° 顺时针 300°，右上留缺口 -->
+  <path d="M43.31 33.83 A12.5 12.5 0 1 1 35.275 24.254" fill="none" stroke="#FFFFFF" stroke-opacity=".55"
+        stroke-width="6.5" stroke-linecap="round"/>
+  <!-- 青：起于环内，45° 穿出缺口并越过外沿，折角即判题通过的勾 -->
+  <path d="M26 33 L28.5 38.5 L47.6 19.3" fill="none" stroke="#FFFFFF" stroke-width="6.5"
+        stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -17,7 +17,8 @@ import { setAuth } from '../api/client';
 import { login } from '../api';
 import { errMessage } from '../components/StateViews';
 import { LoginBackdrop } from '../components/LoginBackdrop';
-import { roleHome } from '../components/Guard';
+import { PasswordField } from '../components/PasswordField';
+import { CHANGE_PASSWORD_PATH, roleHome } from '../components/Guard';
 
 export function LoginPage() {
   const t = useTheme();
@@ -38,7 +39,8 @@ export function LoginPage() {
     try {
       const resp = await login(username.trim(), password);
       setAuth(resp.token, resp.user);
-      navigate(roleHome(resp.user.role), { replace: true });
+      // PW-02：初始密码 / 临时密码登录成功后先到改密页，而不是各自的角色首页。
+      navigate(resp.user.must_change_password ? CHANGE_PASSWORD_PATH : roleHome(resp.user.role), { replace: true });
     } catch (err) {
       setError(errMessage(err));
     } finally {
@@ -80,15 +82,14 @@ export function LoginPage() {
               autoFocus
             />
           </Field>
-          <Field label={<Label htmlFor="ql-login-password">密码</Label>}>
-            <Input
-              id="ql-login-password"
-              type="password"
-              value={password}
-              onChange={(_, data) => setPassword(data.value)}
-              placeholder="密码"
-            />
-          </Field>
+          <PasswordField
+            id="ql-login-password"
+            label="密码"
+            value={password}
+            onChange={setPassword}
+            placeholder="密码"
+            autoComplete="current-password"
+          />
           <Button appearance="primary" type="submit" disabled={busy} size="large">
             {busy ? '登录中…' : '登录'}
           </Button>
