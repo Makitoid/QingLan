@@ -7,6 +7,12 @@ import {
   Card,
   CardHeader,
   Checkbox,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
   Dropdown,
   Field,
   Input,
@@ -19,9 +25,9 @@ import {
   tokens,
 
 } from '@fluentui/react-components';
-import { Send24Regular } from '@fluentui/react-icons';
+import { Add24Regular, CheckboxChecked24Regular, Send24Regular } from '@fluentui/react-icons';
 import { createAssignment, listTeacherProblems, listTeacherSubgroups } from '../../api';
-import type { AssignmentMode, AudienceMode, ScorePolicy } from '../../api/types';
+import type { AssignmentMode, AudienceMode, ProblemSummary, ScorePolicy } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, errMessage } from '../../components/StateViews';
 import { toUtcString } from '../../components/time';
@@ -31,6 +37,18 @@ import { PageHeader } from '../../components/PageHeader';
 interface SelectedProblem {
   problem_id: number;
   full_score: number;
+}
+
+/** 分组筛选的特殊选项值；正常分组名不会以 `__` 开头，两者不会冲突。 */
+const GROUP_ALL = '__all__';
+const GROUP_NONE = '__none__';
+
+/** 「按题目 ID 添加」的输入分隔符：半/全角逗号、分号、空白都认。 */
+const ID_SEPARATOR = /[,，;；\s]+/;
+
+/** 题库分组是自由文本（可空），比较与展示前统一去掉首尾空白。 */
+function groupOf(problem: ProblemSummary): string {
+  return (problem.group_name ?? '').trim();
 }
 
 export function TeacherAssignmentNew() {
@@ -52,8 +70,45 @@ export function TeacherAssignmentNew() {
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
+  // 0.4.0 F2：分组筛选 + 按题目 ID 添加（纯前端，提交体不变）
+  const [groupFilter, setGroupFilter] = useState(GROUP_ALL);
+  const [addByIdOpen, setAddByIdOpen] = useState(false);
+  const [probIdText, setProbIdText] = useState('');
+  const [addByIdError, setAddByIdError] = useState<string | null>(null);
+
   const subgroups = useMemo(() => subgroupData ?? [], [subgroupData]);
   const selectedIds = useMemo(() => new Set(selected.map((s) => s.problem_id)), [selected]);
+  const problemList = useMemo(() => problems ?? [], [problems]);
+
+  /** 下拉选项：全部分组 + 本页数据里出现过的分组（排序）+ 未分组。 */
+  const groupOptions = useMemo(() => {
+    const names = Array
+      .from(new Set(problemList.map(groupOf).filter(Boolean)))
+      .sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+    return [
+      { value: GROUP_ALL, label: '全部分组' },
+      ...names.map((name) => ({ value: name, label: name })),
+      { value: GROUP_NONE, label: '未分组' },
+    ];
+  }, [problemList]);
+
+  const filtered = useMemo(
+    () => problemList.filter((problem) => {
+      const group = groupOf(problem);
+      if (groupFilter === GROUP_NONE) return group === '';
+      if (groupFilter !== GROUP_ALL) return group === groupFilter;
+      return true;
+    }),
+    [problemList, groupFilter],
+  );
+
+  const idTokens = probIdText.split(ID_SEPARATOR).map((x) => x.trim()).filter(Boolean);
+  const idBadTokens = idTokens.filter((x) => !/^\d+$/.test(x));
+  const parsedIds = useMemo(
+    () => Array.from(new Set(idTokens.filter((x) => /^\d+$/.test(x)).map(Number))).filter((n) => n > 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [probIdText],
+  );
 
   const toggleSubgroup = (subgroupId: number, checked: boolean) => {
     setPickedSubgroups((prev) => (
@@ -69,6 +124,30 @@ export function TeacherAssignmentNew() {
 
   const setFullScore = (problemId: number, full_score: number) => {
     setSelected((prev) => prev.map((s) => (s.problem_id === problemId ? { ...s, full_score } : s)));
+  };
+
+  /** 「全选该组」：当前筛选结果里未选者全部加入，默认满分沿用 toggleProblem。 */
+  const selectAllFiltered = () => {
+    filtered.forEach((p) => {
+      if (!selectedIds.has(p.id)) toggleProblem(p.id, true);
+    });
+  };
+
+  /** 按题目 ID 添加：任一无效（不在本人题库）整批拒绝并列出无效 ID。 */
+  const handleAddByIds = () => {
+    if (parsedIds.length === 0) return;
+    const known = new Set(problemList.map((p) => p.id));
+    const invalid = parsedIds.filter((id) => !known.has(id));
+    if (invalid.length > 0) {
+      setAddByIdError(`无效的题目 ID：${invalid.join('、')}，本次未添加任何题目。`);
+      return;
+    }
+    parsedIds.forEach((id) => {
+      if (!selectedIds.has(id)) toggleProblem(id, true);
+    });
+    setAddByIdError(null);
+    setProbIdText('');
+    setAddByIdOpen(false);
   };
 
   const handleSubmit = async () => {
@@ -226,8 +305,35 @@ export function TeacherAssignmentNew() {
 
       <Card size="medium">
         <CardHeader header={<Text weight="semibold">选题（已选 {selected.length} 题）</Text>} />
+        <div style={{ display: 'flex', gap: tokens.spacingHorizontalM, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Dropdown
+            selectedOptions={[groupFilter]}
+            value={groupOptions.find((o) => o.value === groupFilter)?.label}
+            onOptionSelect={(_, d) => setGroupFilter(d.optionValue || GROUP_ALL)}
+            style={{ minWidth: '170px' }}
+          >
+            {groupOptions.map((o) => (
+              <Option key={o.value} value={o.value}>{o.label}</Option>
+            ))}
+          </Dropdown>
+          <Button
+            appearance="secondary"
+            icon={<CheckboxChecked24Regular />}
+            onClick={selectAllFiltered}
+            disabled={filtered.length === 0}
+          >
+            全选该组
+          </Button>
+          <Button
+            appearance="secondary"
+            icon={<Add24Regular />}
+            onClick={() => { setAddByIdError(null); setAddByIdOpen(true); }}
+          >
+            按题目 ID 添加
+          </Button>
+        </div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
-          {(problems ?? []).map((p) => {
+          {filtered.map((p) => {
             const sel = selected.find((s) => s.problem_id === p.id);
             return (
               <div
@@ -260,11 +366,59 @@ export function TeacherAssignmentNew() {
               </div>
             );
           })}
-          {(problems ?? []).length === 0 && (
+          {filtered.length === 0 && problemList.length > 0 && (
+            <Caption1 style={{ color: t.colorNeutralForeground3 }}>该筛选下没有题目。</Caption1>
+          )}
+          {problemList.length === 0 && (
             <Caption1 style={{ color: t.colorNeutralForeground3 }}>题库为空，请先到「题库」创建题目。</Caption1>
           )}
         </div>
       </Card>
+
+      <Dialog open={addByIdOpen} onOpenChange={(_, d) => setAddByIdOpen(d.open)}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>按题目 ID 添加</DialogTitle>
+            <DialogContent>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
+                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                  题目 ID 来自「题库」列表第一列，可一次给多个，用逗号或空格分隔。
+                </Caption1>
+                <Field label="题目 ID" required>
+                  <Input
+                    value={probIdText}
+                    onChange={(_, d) => setProbIdText(d.value)}
+                    placeholder="例如：12, 34 56"
+                    autoFocus
+                  />
+                </Field>
+                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                  {parsedIds.length > 0
+                    ? `识别到 ${parsedIds.length} 个题目 ID。`
+                    : '还没有识别到有效的数字 ID。'}
+                  {idBadTokens.length > 0 && ` 其中「${idBadTokens.join('、')}」不是数字 ID，会被忽略。`}
+                </Caption1>
+                {addByIdError && (
+                  <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
+                    <MessageBarBody>{addByIdError}</MessageBarBody>
+                  </MessageBar>
+                )}
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setAddByIdOpen(false)}>取消</Button>
+              <Button
+                appearance="primary"
+                icon={<Add24Regular />}
+                disabled={parsedIds.length === 0}
+                onClick={handleAddByIds}
+              >
+                {`确认添加${parsedIds.length > 0 ? `（${parsedIds.length} 个 ID）` : ''}`}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
 
       <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
         <Button appearance="primary" size="large" icon={<Send24Regular />} onClick={handleSubmit} disabled={busy}>
