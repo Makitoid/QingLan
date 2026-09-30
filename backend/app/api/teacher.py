@@ -604,11 +604,8 @@ def patch_manual_score(submission_id: int, body: schemas.ManualScorePatch,
 
 
 def _requested_student_ids(raw: list[int]) -> list[int]:
-    """去重保序；空选择在写库之前就拦下。"""
-    ids = list(dict.fromkeys(raw))
-    if not ids:
-        raise APIError(422, "EMPTY_SELECTION", "未选择任何学生")
-    return ids
+    """去重保序；空选择在写库之前就拦下（共享实现见 groups_svc.requested_student_ids）。"""
+    return groups_svc.requested_student_ids(raw)
 
 
 def _my_student_ids(db: Session, teacher_id: int) -> set[int]:
@@ -628,16 +625,10 @@ def _teachable_group_ids(db: Session, teacher_id: int) -> set[int]:
 def _bind_students(db: Session, teacher: User, student_ids: list[int], source: str) -> int:
     """幂等拉入名单并写审计（层 3 的唯一写路径），返回实际新增条数。
 
-    权限校验由调用方在写库之前完成，保证「先校验后写入」的单事务语义。
+    0.4.0 F3 起实现提炼到 groups_svc.bind_manual_students，与 admin 代加共用；
+    行为（幂等、审计同事务、提交时机）与原实现一致。
     """
-    existing = _my_student_ids(db, teacher.id)
-    added = [sid for sid in student_ids if sid not in existing]
-    for sid in added:
-        db.add(TeacherStudent(teacher_id=teacher.id, student_id=sid))
-    log_audit(db, teacher, "teacher_student_bind", "teacher", teacher.id,
-              {"count": len(added), "student_ids": added, "source": source})
-    db.commit()
-    return len(added)
+    return groups_svc.bind_manual_students(db, teacher.id, student_ids, teacher, source)
 
 
 @router.get("/students", response_model=list[schemas.BoundStudentOut])

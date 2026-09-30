@@ -47,6 +47,8 @@ AUDIT_ACTION_LABELS: dict[str, str] = {
     "teacher_group_assign": "教师可教组别分配",
     "teacher_student_bind": "教师拉入学生",
     "teacher_student_unbind": "教师移出学生",
+    "admin_student_bind": "管理员添加临时学生",
+    "admin_student_unbind": "管理员移出临时学生",
     "subgroup_create": "新建子分组",
     "subgroup_update": "子分组改名",
     "subgroup_delete": "删除子分组",

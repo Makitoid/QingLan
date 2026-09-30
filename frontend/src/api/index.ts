@@ -147,6 +147,25 @@ export function getTeacherStudents(id: number): Promise<TeacherRoster> {
   return request<TeacherRoster>(`/admin/teachers/${id}/students`);
 }
 
+/**
+ * 0.4.0 F3：管理员替教师添加临时学生（层 3 手动绑定，`source` 仍是 manual）。
+ * 幂等；无效 / 非学生 / 停用 id 整批 422 INVALID_STUDENT_IDS，空选 422 EMPTY_SELECTION。
+ */
+export function adminBindTempStudents(teacherId: number, studentIds: number[]): Promise<BatchResult> {
+  return request<BatchResult>(`/admin/teachers/${teacherId}/students/bind`, {
+    method: 'POST',
+    body: { student_ids: studentIds },
+  });
+}
+
+/** 0.4.0 F3：管理员替教师移出临时学生；只删手动绑定行，组别派生 id 整批 422 ROSTER_DERIVED_STUDENT。 */
+export function adminUnbindTempStudents(teacherId: number, studentIds: number[]): Promise<BatchResult> {
+  return request<BatchResult>(`/admin/teachers/${teacherId}/students/unbind`, {
+    method: 'POST',
+    body: { student_ids: studentIds },
+  });
+}
+
 /** BD-02：读取该教师可教的组别（层 2）。 */
 export function getTeacherGroups(id: number): Promise<TeacherGroups> {
   return request<TeacherGroups>(`/admin/teachers/${id}/groups`);

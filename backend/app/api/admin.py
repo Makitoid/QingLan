@@ -33,10 +33,11 @@ from ..core.security import (APIError, generate_temp_password,
                              hash_password_many, require_admin, temp_password_expires_at,
                              utcnow_str)
 from ..models import (AuditLog, Group, GroupMember, SiteSetting, TeacherGroup,
-                      TeacherNotice, User)
+                      TeacherNotice, TeacherStudent, User)
 from ..schemas import (AccountCreate, AdminSettingsOut, AuditLogOut, AuditLogPageOut,
                        BatchActiveRequest, BatchResetPasswordRequest, BatchResetResultOut,
-                       GroupCreate, GroupMembershipOut, GroupMembersRequest, GroupOut, GroupRef,
+                       BindStudentsRequest, GroupCreate, GroupMembershipOut, GroupMembersRequest,
+                       GroupOut, GroupRef,
                        GroupUpdate, ImportFailure, ImportResult, IsActivePatch,
                        RosterEntryOut, SettingsOut, SettingsUpdate, StudentOut,
                        TeacherGroupsOut, TeacherGroupsRequest, TeacherOut,
@@ -240,10 +241,11 @@ def reset_teacher_password(teacher_id: int, db: Session = Depends(get_db), admin
 
 @router.get("/admin/teachers/{teacher_id}/students", response_model=TeacherRosterOut)
 def list_teacher_students(teacher_id: int, db: Session = Depends(get_db), _: User = Depends(require_admin)):
-    """BD-06 + 0.3.2 F1：admin 保留教师名单的只读视图（写接口已删除，层 3 唯一写者是教师本人）。
+    """BD-06 + 0.3.2 F1：admin 保留教师名单的只读视图（0.4.0 F3 起另有下方代加/代删写接口）。
 
-    名单口径 = 可教组成员 ∪ 手动添加；每条给出 source（manual/group）与该生所在的可教组名，
-    供教师详情页渲染矩阵来源角标。撤销组别后该组学生立即从本视图消失（手动添加者不受影响）。
+    名单口径 = 可教组成员 ∪ 手动添加（UI 文案「临时添加」）；每条给出 source（manual/group）
+    与该生所在的可教组名，供教师详情页渲染矩阵来源角标。撤销组别后该组学生立即从本视图消失
+    （手动添加者不受影响）。
     """
     get_role_user(db, teacher_id, "teacher")
     manual = groups_svc.manual_student_ids(db, teacher_id)
@@ -258,6 +260,55 @@ def list_teacher_students(teacher_id: int, db: Session = Depends(get_db), _: Use
         )
         for s in stats.bound_students(db, teacher_id)
     ])
+
+
+# ---------- 0.4.0 F3：admin 代加/代删「临时学生」（层 3 手动绑定行，UI 文案为临时添加）----------
+
+@router.post("/admin/teachers/{teacher_id}/students/bind", response_model=GroupMembershipOut)
+def bind_teacher_students(teacher_id: int, body: BindStudentsRequest,
+                          db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """F3：管理员替教师添加临时学生（幂等插层 3 行，接口与响应形状对齐 teacher 端 bind）。
+
+    校验口径与 ``POST /teacher/students/bind`` 一致：仅 role=student 且 is_active=1，
+    任一不满足整批 422 且不写库；教师不存在或角色不符 → 404。
+    """
+    get_role_user(db, teacher_id, "teacher")
+    student_ids = groups_svc.requested_student_ids(body.student_ids)
+    valid = set(db.execute(
+        select(User.id)
+        .where(User.id.in_(student_ids), User.role == "student", User.is_active == 1)
+    ).scalars().all())
+    if valid != set(student_ids):
+        raise APIError(422, "INVALID_STUDENT_IDS", "存在无效、非学生或已停用的账号")
+    added = groups_svc.bind_manual_students(db, teacher_id, student_ids, admin,
+                                            "manual", action="admin_student_bind")
+    return GroupMembershipOut(success_count=added)
+
+
+@router.post("/admin/teachers/{teacher_id}/students/unbind", response_model=GroupMembershipOut)
+def unbind_teacher_students(teacher_id: int, body: BindStudentsRequest,
+                            db: Session = Depends(get_db), admin: User = Depends(require_admin)):
+    """F3：管理员替教师移出临时学生 —— 只删层 3 `teacher_students` 行。
+
+    判定与消息沿用 ``POST /teacher/students/unbind``（BD-05）：组别派生（在可教组并集里
+    但没有手动绑定行）的 id 整批 422 且不写库；名单外的 id 静默忽略（幂等）。
+    """
+    get_role_user(db, teacher_id, "teacher")
+    student_ids = groups_svc.requested_student_ids(body.student_ids)
+    requested = set(student_ids)
+    manual = groups_svc.manual_student_ids(db, teacher_id)
+    derived = sorted((requested & groups_svc.teachable_student_ids(db, teacher_id)) - manual)
+    if derived:
+        ids_text = "、".join(str(i) for i in derived)
+        raise APIError(422, "ROSTER_DERIVED_STUDENT",
+                       f"学生 {ids_text} 来自可教组别，需由管理员撤销组别后才能移出名单")
+    removed = sorted(manual & requested)
+    for sid in removed:
+        db.delete(db.get(TeacherStudent, (teacher_id, sid)))
+    log_audit(db, admin, "admin_student_unbind", "teacher", teacher_id,
+              {"count": len(removed), "student_ids": removed})
+    db.commit()
+    return GroupMembershipOut(success_count=len(removed))
 
 
 def teacher_group_ids(db: Session, teacher_id: int) -> list[int]:
