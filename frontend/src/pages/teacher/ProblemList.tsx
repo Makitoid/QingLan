@@ -5,6 +5,7 @@ import {
   Badge,
   Button,
   Caption1,
+  Combobox,
   createTableColumn, DataGrid,
   DataGridBody,
   DataGridCell,
@@ -27,14 +28,22 @@ import {
   tokens,
 
   type TableColumnDefinition,
+  type TableRowId,
 } from '@fluentui/react-components';
-import { Add24Regular, Delete24Regular } from '@fluentui/react-icons';
-import { createTeacherProblem, deleteTeacherProblem, listTeacherProblems } from '../../api';
+import { Add24Regular, Delete24Regular, Dismiss24Regular, Group24Regular } from '@fluentui/react-icons';
+import {
+  batchDeleteTeacherProblems,
+  batchGroupTeacherProblems,
+  createTeacherProblem,
+  deleteTeacherProblem,
+  listTeacherProblems,
+} from '../../api';
 import type { ProblemSummary } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, EmptyView, errCode, errMessage } from '../../components/StateViews';
 import { fmtTime } from '../../components/time';
 import { PageHeader } from '../../components/PageHeader';
+import { BulkActionBar } from '../../components/BulkActionBar';
 import { useDangerStyles } from '../../components/dangerStyles';
 
 const COMPARE_LABELS: Record<string, string> = { exact: '精确', trim: '忽略空白', float: '浮点容差' };
@@ -75,6 +84,16 @@ export function TeacherProblemList() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
 
+  // 0.4.0 F1：多选 + 批量分组 / 批量删除
+  const [selectedIds, setSelectedIds] = useState<Set<TableRowId>>(new Set());
+  const [groupOpen, setGroupOpen] = useState(false);
+  const [groupText, setGroupText] = useState('');
+  const [groupBusy, setGroupBusy] = useState(false);
+  const [groupError, setGroupError] = useState<string | null>(null);
+  const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
+  const [bulkDeleting, setBulkDeleting] = useState(false);
+  const [bulkDeleteError, setBulkDeleteError] = useState<string | null>(null);
+
   const problems = useMemo(() => data ?? [], [data]);
 
   /** 下拉选项：全部分组 + 本页数据里出现过的分组（排序）+ 未分组。 */
@@ -109,6 +128,69 @@ export function TeacherProblemList() {
   const resetFilters = () => {
     setSearch('');
     setGroupFilter(GROUP_ALL);
+  };
+
+  /** 批量动作只作用于当前表格里仍可见的选中项（筛选变化后不误伤）。 */
+  const selectedProblemIds = useMemo(
+    () => filtered.filter((problem) => selectedIds.has(problem.id)).map((problem) => problem.id),
+    [filtered, selectedIds],
+  );
+
+  /** 分组 Dialog 的候选：groupOptions 里剔除「全部分组 / 未分组」两个哨兵，只留真实组名。 */
+  const groupCandidates = useMemo(
+    () => groupOptions
+      .map((o) => o.value)
+      .filter((value) => value !== GROUP_ALL && value !== GROUP_NONE),
+    [groupOptions],
+  );
+
+  const closeGroupDialog = () => {
+    setGroupOpen(false);
+    setGroupText('');
+    setGroupError(null);
+  };
+
+  const handleBatchGroup = async () => {
+    const name = groupText.trim();
+    if (!name) {
+      setGroupError('请输入分组名');
+      return;
+    }
+    setGroupBusy(true);
+    setGroupError(null);
+    try {
+      await batchGroupTeacherProblems(selectedProblemIds, name);
+      closeGroupDialog();
+      setSelectedIds(new Set());
+      setGroupBusy(false);
+      reload();
+    } catch (err) {
+      setGroupBusy(false);
+      setGroupError(errMessage(err));
+    }
+  };
+
+  const closeBulkDeleteDialog = () => {
+    setBulkDeleteOpen(false);
+    setBulkDeleteError(null);
+  };
+
+  /** 批量删除：被场次引用时整批 409，直接展示后端 message（列出了冲突题名）。 */
+  const handleBatchDelete = async () => {
+    setBulkDeleting(true);
+    setBulkDeleteError(null);
+    try {
+      await batchDeleteTeacherProblems(selectedProblemIds);
+      closeBulkDeleteDialog();
+      setSelectedIds(new Set());
+      setBulkDeleting(false);
+      reload();
+    } catch (err) {
+      setBulkDeleting(false);
+      setBulkDeleteError(
+        errCode(err) === 'PROBLEM_IN_USE' ? errMessage(err) : `批量删除失败：${errMessage(err)}`,
+      );
+    }
   };
 
   const handleCreate = async () => {
@@ -163,7 +245,6 @@ export function TeacherProblemList() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
       <PageHeader
         title="题库"
-        subtitle="搜索与分组筛选均为前端过滤；分组是自由文本，在题目编辑页填写。"
         actions={
           <>
             <SearchBox
@@ -187,8 +268,43 @@ export function TeacherProblemList() {
         }
       />
 
+      <BulkActionBar
+        selectedCount={selectedIds.size}
+        label={`已选 ${selectedIds.size} 道题`}
+        actions={[
+          {
+            key: 'group',
+            label: '加入分组',
+            icon: <Group24Regular />,
+            disabled: groupBusy || bulkDeleting,
+            onClick: () => {
+              setGroupError(null);
+              setGroupOpen(true);
+            },
+          },
+          {
+            key: 'delete',
+            label: '删除',
+            icon: <Delete24Regular />,
+            danger: true,
+            disabled: groupBusy || bulkDeleting,
+            onClick: () => {
+              setBulkDeleteError(null);
+              setBulkDeleteOpen(true);
+            },
+          },
+          {
+            key: 'cancel',
+            label: '取消选择',
+            icon: <Dismiss24Regular />,
+            disabled: groupBusy || bulkDeleting,
+            onClick: () => setSelectedIds(new Set()),
+          },
+        ]}
+      />
+
       {problems.length === 0 ? (
-        <EmptyView title="题库为空" description="点击右上角「新建题目」创建第一道题。" />
+        <EmptyView title="题库为空" />
       ) : (
         <>
           <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS }}>
@@ -203,11 +319,19 @@ export function TeacherProblemList() {
           {filtered.length === 0 ? (
             <EmptyView
               title="没有匹配的题目"
-              description="换个关键词，或清除筛选条件后重试。"
               action={<Button appearance="secondary" size="small" onClick={resetFilters}>清除筛选</Button>}
             />
           ) : (
-            <DataGrid items={filtered} columns={columns} focusMode="cell" resizableColumns>
+            <DataGrid
+              items={filtered}
+              columns={columns}
+              focusMode="cell"
+              resizableColumns
+              selectionMode="multiselect"
+              getRowId={(item) => item.id}
+              selectedItems={selectedIds}
+              onSelectionChange={(_, d) => setSelectedIds(new Set(d.selectedItems))}
+            >
               <DataGridHeader>
                 <DataGridRow>
                   {({ renderHeaderCell }) => <DataGridHeaderCell>{renderHeaderCell()}</DataGridHeaderCell>}
@@ -308,6 +432,81 @@ export function TeacherProblemList() {
                 disabled={deleting}
               >
                 {deleting ? '删除中…' : '确认删除'}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog open={groupOpen} onOpenChange={(_, d) => { if (!d.open && !groupBusy) closeGroupDialog(); }}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>加入分组</DialogTitle>
+            <DialogContent>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
+                <Field label="分组名" required>
+                  <Combobox
+                    placeholder="选择已有分组，或输入新分组名"
+                    value={groupText}
+                    onChange={(e) => {
+                      const v = e.target instanceof HTMLInputElement ? e.target.value : '';
+                      setGroupText(v);
+                    }}
+                    disabled={groupBusy}
+                    autoFocus
+                    style={{ width: '100%' }}
+                  >
+                    {groupCandidates.map((name) => (
+                      <Option key={name} value={name}>{name}</Option>
+                    ))}
+                  </Combobox>
+                </Field>
+                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                  {`将把选中的 ${selectedProblemIds.length} 道题归入该分组。`}
+                </Caption1>
+                {groupError && (
+                  <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
+                    <MessageBarBody>{groupError}</MessageBarBody>
+                  </MessageBar>
+                )}
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={closeGroupDialog} disabled={groupBusy}>取消</Button>
+              <Button appearance="primary" onClick={handleBatchGroup} disabled={groupBusy}>
+                {groupBusy ? '保存中…' : '确认加入'}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      <Dialog open={bulkDeleteOpen} onOpenChange={(_, d) => { if (!d.open && !bulkDeleting) closeBulkDeleteDialog(); }}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>批量删除题目</DialogTitle>
+            <DialogContent>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
+                <Caption1>
+                  {`确定删除选中的 ${selectedProblemIds.length} 道题？题面与全部测试用例一并删除，且不可恢复。`}
+                </Caption1>
+                {bulkDeleteError && (
+                  <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
+                    <MessageBarBody>{bulkDeleteError}</MessageBarBody>
+                  </MessageBar>
+                )}
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={closeBulkDeleteDialog} disabled={bulkDeleting}>取消</Button>
+              <Button
+                appearance="primary"
+                className={danger.solid}
+                icon={<Delete24Regular />}
+                onClick={handleBatchDelete}
+                disabled={bulkDeleting}
+              >
+                {bulkDeleting ? '删除中…' : '确认删除'}
               </Button>
             </DialogActions>
           </DialogBody>

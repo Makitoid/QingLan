@@ -411,6 +411,22 @@ export function deleteTeacherProblem(id: number): Promise<void> {
   return request<void>(`/teacher/problems/${id}`, { method: 'DELETE' });
 }
 
+/** 批量设置题目分组（0.4.0 F1）；任一题不属于本人 → 整批 403 且零写入。 */
+export function batchGroupTeacherProblems(problemIds: number[], groupName: string): Promise<BatchResult> {
+  return request<BatchResult>('/teacher/problems/batch_group', {
+    method: 'POST',
+    body: { problem_ids: problemIds, group_name: groupName },
+  });
+}
+
+/** 批量删除题目（0.4.0 F1）；任一题被场次引用 → 整批 409 PROBLEM_IN_USE，message 列出题名。 */
+export function batchDeleteTeacherProblems(problemIds: number[]): Promise<BatchResult> {
+  return request<BatchResult>('/teacher/problems/batch_delete', {
+    method: 'POST',
+    body: { problem_ids: problemIds },
+  });
+}
+
 /** 保存题目草稿（每题仅一份，新草稿覆盖旧草稿）；正式保存成功后由服务端清空。 */
 export function saveProblemDraft(id: number, draft: ProblemDraft): Promise<void> {
   return request<void>(`/teacher/problems/${id}/draft`, { method: 'PUT', body: draft });

@@ -564,10 +564,12 @@ class TestDeprecatedEndpoints:
         for _method, path in DEPRECATED_PATHS:
             assert path not in paths, path
         # 教师端组相关的入口：只读的 /classes + 0.3.2 F1 新增的教师私有三条子分组路由
+        # + 0.4.0 F1 题库批量分组（写的是 Problem.group_name 自由文本，与层 1 组成员无关）
         teacher_group_paths = {p for p in paths if p.startswith("/api/teacher")
                                and ("group" in p or p.endswith("/classes"))}
         assert teacher_group_paths == {
             "/api/teacher/classes",
+            "/api/teacher/problems/batch_group",
             "/api/teacher/subgroups",
             "/api/teacher/subgroups/{subgroup_id}",
             "/api/teacher/subgroups/{subgroup_id}/students",

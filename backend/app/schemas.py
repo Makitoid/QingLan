@@ -292,6 +292,14 @@ class ProblemUpdate(BaseModel):
     group_name: str | None = None
 
 
+class ProblemBatchRequest(BaseModel):
+    problem_ids: list[int]
+
+
+class ProblemBatchGroupRequest(ProblemBatchRequest):
+    group_name: str = Field(max_length=50)
+
+
 class ProblemDraft(BaseModel):
     """未保存的编辑内容快照；服务端原样存 JSON，保存题目时清空。"""
 

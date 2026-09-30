@@ -41,6 +41,14 @@ def _get_owned_problem(db: Session, teacher: User, problem_id: int) -> Problem:
     return problem
 
 
+def _requested_problem_ids(raw: list[int]) -> list[int]:
+    """去重保序；空选择在写库之前就拦下（与 _requested_student_ids 同范式）。"""
+    ids = list(dict.fromkeys(raw))
+    if not ids:
+        raise APIError(422, "EMPTY_SELECTION", "未选择任何题目")
+    return ids
+
+
 def _get_owned_assignment(db: Session, teacher: User, assignment_id: int) -> Assignment:
     assignment = db.get(Assignment, assignment_id)
     if assignment is None:
@@ -166,6 +174,54 @@ def create_problem(body: schemas.ProblemCreate,
     db.commit()
     db.refresh(problem)
     return problem
+
+
+@router.post("/problems/batch_group", response_model=schemas.GroupMembershipOut)
+def batch_group_problems(body: schemas.ProblemBatchGroupRequest,
+                         db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """0.4.0 F1：批量设置题目分组（自由文本，整批写入 strip 后的组名）。
+
+    沿用全仓批量范式：先去重、再逐题归属校验，任一题不存在或不属于本人
+    → 整批拒绝且不写库；审计与写入同事务。
+    """
+    problem_ids = _requested_problem_ids(body.problem_ids)
+    problems = [_get_owned_problem(db, teacher, pid) for pid in problem_ids]
+    name = (body.group_name or "").strip()
+    if not name:
+        raise APIError(422, "VALIDATION_ERROR", "分组名不能为空")
+    for problem in problems:
+        problem.group_name = name
+    log_audit(db, teacher, "problem_batch_group", "problem", None,
+              {"problem_ids": problem_ids, "group_name": name})
+    db.commit()
+    return schemas.GroupMembershipOut(success_count=len(problems))
+
+
+@router.post("/problems/batch_delete", response_model=schemas.GroupMembershipOut)
+def batch_delete_problems(body: schemas.ProblemBatchRequest,
+                          db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """0.4.0 F1：批量删除题目；题面与测试用例随单删同样级联删除（FK ondelete=CASCADE）。
+
+    只要批次里任一题被场次引用 → 整批 409 PROBLEM_IN_USE 并在 message 里列出
+    被引用题名（超过 3 个列前 3 个加「等 N 道」），一题都不删。
+    """
+    problem_ids = _requested_problem_ids(body.problem_ids)
+    problems = [_get_owned_problem(db, teacher, pid) for pid in problem_ids]
+    in_use = set(db.execute(
+        select(AssignmentProblem.problem_id).where(AssignmentProblem.problem_id.in_(problem_ids))
+    ).scalars().all())
+    blocked = [p.title for p in problems if p.id in in_use]
+    if blocked:
+        titles = "、".join(f"「{title}」" for title in blocked[:3])
+        suffix = f" 等 {len(blocked)} 道" if len(blocked) > 3 else ""
+        raise APIError(409, "PROBLEM_IN_USE",
+                       f"题目 {titles}{suffix} 已被场次引用，无法删除，操作已整批取消")
+    for problem in problems:
+        db.delete(problem)
+    log_audit(db, teacher, "problem_batch_delete", "problem", None,
+              {"problem_ids": problem_ids})
+    db.commit()
+    return schemas.GroupMembershipOut(success_count=len(problems))
 
 
 @router.get("/problems/{problem_id}", response_model=schemas.ProblemDetailOut)
