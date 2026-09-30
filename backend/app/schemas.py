@@ -495,7 +495,7 @@ class StudentProblemScoreOut(BaseModel):
 
     F6 起 `StudentRowOut.problem_scores` 仍只填前 5 个字段（默认值兜底），
     逐学生按题调分端点则额外填 submission_count / latest_submission_id /
-    score / manual_score —— 三者取自该题**最新一条**提交，effective_score 取自
+    verdict / score / manual_score —— 四者取自该题**最新一条**提交，effective_score 取自
     aggregate_scores 全量口径，两者口径不同故并列输出。
     """
 
@@ -506,6 +506,7 @@ class StudentProblemScoreOut(BaseModel):
     effective_score: float | None = None
     submission_count: int = 0
     latest_submission_id: int | None = None
+    verdict: str | None = None
     score: float | None = None
     manual_score: float | None = None
 

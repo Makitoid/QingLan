@@ -20,7 +20,7 @@ from sqlalchemy import text
 
 from app.core.security import create_token
 from app.main import app
-from app.models import AuditLog, SubmissionResult, User
+from app.models import AssignmentProblem, AuditLog, Problem, SubmissionResult, User
 
 from .conftest import make_submission
 
@@ -204,3 +204,44 @@ class TestRejudgeClearsManualScore:
         assert score_of(db, judged) == (None, None)
         assert client.patch(f"/api/teacher/submissions/{judged.id}/score",
                             headers=h_teacher, json={"manual_score": 30}).status_code == 200
+
+
+class TestStudentProblemsVerdict:
+    """0.4.0 F5：逐题下钻端点 rows 补 verdict —— 取该题最新一条提交的判定，未交为 None。"""
+
+    def test_student_problems_returns_latest_verdict(self, client, db, teacher, h_teacher,
+                                                     assignment, problem, student):
+        # 第二题只进题单、不提交：验证「未交题 verdict=None」。
+        p2 = Problem(title="第二题", description="", input_format="", output_format="",
+                     time_limit_ms=1000, memory_limit_mb=256, compare_mode="trim",
+                     created_by=teacher.id)
+        db.add(p2)
+        db.commit()
+        db.refresh(p2)
+        db.add(AssignmentProblem(assignment_id=assignment.id, problem_id=p2.id,
+                                 seq=2, full_score=50.0))
+        db.commit()
+
+        first = make_submission(db, assignment, problem, student, "int main(){}")
+        first.status = "done"
+        first.verdict = "WA"
+        first.score = 25.0
+        db.commit()
+
+        # 同题再交一份并判 AC：rows 里的 verdict / latest_submission_id 都跟「最新一条」走。
+        latest = make_submission(db, assignment, problem, student, "int main(){}")
+        latest.status = "done"
+        latest.verdict = "AC"
+        latest.score = 100.0
+        db.commit()
+
+        resp = client.get(f"/api/teacher/assignments/{assignment.id}/students/{student.id}/problems",
+                          headers=h_teacher)
+        assert resp.status_code == 200, resp.text
+        by_seq = {row["seq"]: row for row in resp.json()}
+
+        assert by_seq[1]["verdict"] == "AC"
+        assert by_seq[1]["latest_submission_id"] == latest.id
+        assert by_seq[1]["submission_count"] == 2
+        assert by_seq[2]["verdict"] is None
+        assert by_seq[2]["latest_submission_id"] is None

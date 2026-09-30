@@ -437,6 +437,8 @@ export interface StudentProblemScoreRow {
   full_score: number;
   submission_count: number;
   latest_submission_id: number | null;
+  /** 0.4.0 F5：最新一条提交的判定；无提交为 null。pending 时后端 verdict 仍为 NULL。 */
+  verdict?: Verdict | null;
   score: number | null;
   manual_score: number | null;
   effective_score: number | null;

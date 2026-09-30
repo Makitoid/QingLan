@@ -1,6 +1,6 @@
 import { useTheme } from '../appTheme';
 import { useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import {
   Badge,
   Button,
@@ -30,13 +30,6 @@ const PROBLEM_COL_PREFIX = 'problem:';
 const problemColumnId = (problemId: number) => `${PROBLEM_COL_PREFIX}${problemId}`;
 
 /**
- * F6：逐学生按题调分页路径——行内所有入口（每题得分 / 调分列）都落到这里。
- * 0.4.0 F4 把表格搬进总览页时链接口径暂不动，F5 删下钻页后改指判分页。
- */
-const studentScoresPath = (assignmentId: number, studentId: number) =>
-  `/teacher/assignments/${assignmentId}/students/${studentId}`;
-
-/**
  * 每题列的题单：后端保证每行的 problem_scores 同序（即题单 seq），取第一行推导即可；
  * 没有数据（空表 / 首行无题单）时退回固定列。
  *
@@ -50,7 +43,7 @@ function problemColumnsFor(rows: AssignmentStudentRow[] | null | undefined): Ass
 /**
  * 某题得分单元格。未提交该题（effective_score 为 null）显示**空**，
  * 与导出的 xlsx 一致（那里写空串，见 services/export.py），不写 0 也不写「—」。
- * F6 起同一单元格同时是逐题调分入口（外层的 Link 由调用处包）。
+ * 0.4.0 F5 起为纯文本——调分入口统一收进「查看详情」列，直达判分页。
  */
 function problemCell(item: AssignmentStudentRow, columnId: string): string {
   const problemId = Number(columnId.slice(PROBLEM_COL_PREFIX.length));
@@ -103,6 +96,7 @@ export function useAssignmentStudentsExport(assignmentId: number) {
  */
 export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number }) {
   const t = useTheme();
+  const navigate = useNavigate();
   const { data, error, loading, reload } = useAsync<AssignmentStudentRow[]>(
     () => getAssignmentStudents(assignmentId),
     [assignmentId],
@@ -170,16 +164,21 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
                 {columnId === 'submitted_count' && item.submitted_count}
                 {columnId === 'best' && fmtScore(item.best_effective_score)}
                 {columnId === 'total' && fmtScore(item.total_score)}
-                {typeof columnId === 'string' && columnId.startsWith(PROBLEM_COL_PREFIX) && (
-                  <Link to={studentScoresPath(assignmentId, item.student_id)} style={{ color: t.colorBrandForeground1 }}>
-                    {problemCell(item, columnId)}
-                  </Link>
-                )}
+                {typeof columnId === 'string' && columnId.startsWith(PROBLEM_COL_PREFIX) &&
+                  problemCell(item, columnId)}
                 {columnId === 'last_submitted_at' && fmtTime(item.last_submitted_at)}
                 {columnId === 'drill' && (
-                  <Link to={studentScoresPath(assignmentId, item.student_id)} style={{ color: t.colorBrandForeground1 }}>
-                    查看详情
-                  </Link>
+                  item.last_submission_id === null || item.last_submission_id === undefined ? (
+                    <Caption1 style={{ color: t.colorNeutralForeground4 }}>—</Caption1>
+                  ) : (
+                    <Button
+                      appearance="subtle"
+                      size="small"
+                      onClick={() => navigate(`/teacher/submissions/${item.last_submission_id}`)}
+                    >
+                      查看详情
+                    </Button>
+                  )
                 )}
               </DataGridCell>
             )}
