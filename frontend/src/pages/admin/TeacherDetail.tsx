@@ -24,7 +24,7 @@ import {
   Tooltip,
   tokens,
 } from '@fluentui/react-components';
-import { Add24Regular, ArrowExit24Regular, Key24Regular, Save24Regular } from '@fluentui/react-icons';
+import { Add24Regular, Dismiss24Regular, Key24Regular, Save24Regular } from '@fluentui/react-icons';
 import {
   getTeacherGroups,
   getTeacherStudents,
@@ -232,49 +232,57 @@ export function AdminTeacherDetail() {
             </Button>
           }
         />
-        <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-          组别（行政班）的成员由管理员在「学生管理 → 分组管理」维护；分配给教师的组，其成员自动成为该教师的学生，
-          也可在新建场次时选作受众。保存为全量替换，撤销某组后该组学生立即离开教师名单。
-        </Caption1>
         {addedIds.length + removedIds.length > 0 && (
           <Caption1 style={{ display: 'block', color: t.colorPaletteDarkOrangeForeground1 }}>
             待保存：新增 {addedIds.length} 个、移除 {removedIds.length} 个。
           </Caption1>
         )}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalSNudge, marginTop: tokens.spacingVerticalM }}>
-          {pickedGroups.length === 0 ? (
-            <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-              {allGroups.length === 0
-                ? '还没有任何组别，请先到「学生管理 → 分组管理」创建。'
-                : '尚未分配任何可教组别，该教师目前没有可教学生。'}
-            </Caption1>
-          ) : (
-            pickedGroups.map((g) => (
-              <div key={g.id} style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS }}>
-                <Text size={300} style={{ flex: 1 }}>{g.name}</Text>
-                <Caption1 style={{ color: t.colorNeutralForeground4 }}>{g.member_count} 人</Caption1>
-                <Button
-                  size="small"
-                  appearance="subtle"
-                  icon={<ArrowExit24Regular />}
-                  disabled={busy}
-                  onClick={() => setPicked(g.id, false)}
-                >
-                  移除
-                </Button>
-              </div>
-            ))
-          )}
-          <div>
-            <Button
-              appearance="secondary"
-              icon={<Add24Regular />}
-              disabled={busy || assignableGroups.length === 0}
-              onClick={openPicker}
-            >
-              添加组
-            </Button>
+        {pickedGroups.length === 0 ? (
+          <Caption1 style={{ display: 'block', marginTop: tokens.spacingVerticalM, color: t.colorNeutralForeground3 }}>
+            {allGroups.length === 0
+              ? '还没有任何组别，请先到「学生管理 → 分组管理」创建。'
+              : '尚未分配任何可教组别，该教师目前没有可教学生。'}
+          </Caption1>
+        ) : (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalS, marginTop: tokens.spacingVerticalM }}>
+            {pickedGroups.map((g) => (
+              <span
+                key={g.id}
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: tokens.spacingHorizontalXS,
+                  padding: `${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalXXS} ${tokens.spacingVerticalXXS} ${tokens.spacingHorizontalS}`,
+                  border: `1px solid ${t.colorNeutralStroke2}`,
+                  borderRadius: tokens.borderRadiusCircular,
+                  backgroundColor: t.colorNeutralBackground2,
+                }}
+              >
+                <Text size={300} weight="semibold">{g.name}</Text>
+                <Caption1 style={{ color: t.colorNeutralForeground3 }}>{g.member_count} 人</Caption1>
+                <Tooltip content="从可教组别移除" relationship="label">
+                  <Button
+                    size="small"
+                    appearance="subtle"
+                    icon={<Dismiss24Regular />}
+                    aria-label={`移除组 ${g.name}`}
+                    disabled={busy}
+                    onClick={() => setPicked(g.id, false)}
+                  />
+                </Tooltip>
+              </span>
+            ))}
           </div>
+        )}
+        <div style={{ marginTop: tokens.spacingVerticalM }}>
+          <Button
+            appearance="secondary"
+            icon={<Add24Regular />}
+            disabled={busy || assignableGroups.length === 0}
+            onClick={openPicker}
+          >
+            添加组
+          </Button>
         </div>
       </Card>
 

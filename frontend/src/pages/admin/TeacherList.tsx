@@ -120,7 +120,6 @@ export function AdminTeacherList() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
       <PageHeader
         title="教师管理"
-        subtitle="新建教师无需填密码（统一初始密码 + 首登强制改密）。「可教组别」与名单在教师详情里维护。"
         actions={
           <>
             <SearchBox placeholder="按工号或姓名搜索" value={search} onChange={(_, d) => setSearch(d.value)} style={{ width: '240px' }} />

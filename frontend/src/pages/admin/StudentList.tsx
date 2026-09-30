@@ -19,12 +19,19 @@ import {
   Dropdown,
   Field,
   Input,
+  Menu,
+  MenuTrigger,
+  MenuPopover,
+  MenuList,
+  MenuItem,
   MessageBar,
   MessageBarActions,
   MessageBarBody,
   Option,
   SearchBox,
+  Spinner,
   Text,
+  Tooltip,
   tokens,
 
   type TableColumnDefinition,
@@ -33,6 +40,7 @@ import {
 import {
   Add24Regular,
   ArrowExit24Regular,
+  ArrowExportUp24Regular,
   ArrowUpload24Regular,
   Dismiss24Regular,
   Group24Regular,
@@ -47,6 +55,7 @@ import {
   adminBatchGroupMembers,
   adminBatchResetPassword,
   createStudent,
+  exportStudents,
   importStudents,
   listGroups,
   listStudents,
@@ -111,6 +120,7 @@ export function AdminStudentList() {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState({ username: '', display_name: '' });
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
   const [importResult, setImportResult] = useState<ImportResult | null>(null);
 
@@ -187,8 +197,21 @@ export function AdminStudentList() {
     }
   };
 
-  const handleToggleActive = async (item: StudentItem) => {
-    const action = item.is_active ? '停用' : '启用';
+  /** 导出学生名单（0.3.2 F2）：与当前筛选同口径，xlsx / csv 由下拉菜单选择。 */
+  const handleExportStudents = async (format: 'xlsx' | 'csv') => {
+    setExporting(true);
+    setNotice(null);
+    try {
+      await exportStudents({ format, q: debouncedQ, groupId });
+      setNotice({ intent: 'success', text: `已导出学生名单（${format === 'csv' ? 'CSV' : 'Excel'}）。` });
+    } catch (err) {
+      setNotice({ intent: 'error', text: `导出失败：${errMessage(err)}` });
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const handleToggleActive = async (item: StudentItem) => {    const action = item.is_active ? '停用' : '启用';
     if (!window.confirm(`确定${action}学生「${item.display_name}（${item.username}）」？停用后该账号无法登录。`)) return;
     try {
       await updateStudentActive(item.id, !item.is_active);
@@ -307,13 +330,6 @@ export function AdminStudentList() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
       <PageHeader
         title="学生管理"
-        subtitle={
-          <>
-            导入格式：xlsx / txt / csv，四列「学号 | 姓名 | 组别 | 教师（可选）」。组别可留空；一行多个组别或教师用 、 ， , ； ; / 分隔，
-            不存在的组别会自动创建；教师列须与组别同时给出且按工号精确匹配，用于登记「可教组别」。
-            新建与导入的学生都用统一初始密码，首次登录被强制改密。
-          </>
-        }
         actions={
           <>
             <SearchBox
@@ -328,7 +344,7 @@ export function AdminStudentList() {
               selectedOptions={groupFilter ? [groupFilter] : []}
               onOptionSelect={(_, d) => setGroupFilter(String(d.optionValue ?? ''))}
               disabled={busy}
-              style={{ width: '140px' }}
+              style={{ width: '110px', minWidth: '110px' }}
             >
               <Option value="" text="全部组别">全部组别</Option>
               {groups.map((g) => (
@@ -340,16 +356,38 @@ export function AdminStudentList() {
             <Button appearance="secondary" icon={<PeopleTeam24Regular />} onClick={() => setManageOpen(true)}>
               分组管理
             </Button>
-            <Button appearance="secondary" icon={<ArrowUpload24Regular />} onClick={() => fileRef.current?.click()} disabled={busy}>
-              导入学生
-            </Button>
+            <Tooltip
+              content="导入 Excel（.xlsx），四列：学号｜姓名｜组别｜教师（可选）。组别可留空，不存在的组别自动创建；教师列按工号精确匹配，用于登记「可教组别」。新学生用统一初始密码，首次登录强制改密。"
+              relationship="label"
+            >
+              <Button appearance="secondary" icon={<ArrowUpload24Regular />} onClick={() => fileRef.current?.click()} disabled={busy}>
+                导入学生
+              </Button>
+            </Tooltip>
             <input
               ref={fileRef}
               type="file"
-              accept=".xlsx,.txt,.csv"
+              accept=".xlsx"
               style={{ display: 'none' }}
               onChange={(e) => void handleImportFile(e.target.files?.[0])}
             />
+            <Menu positioning="below-end">
+              <MenuTrigger disableButtonEnhancement>
+                <Button
+                  appearance="secondary"
+                  icon={exporting ? <Spinner size="tiny" /> : <ArrowExportUp24Regular />}
+                  disabled={exporting || busy}
+                >
+                  导出学生
+                </Button>
+              </MenuTrigger>
+              <MenuPopover>
+                <MenuList>
+                  <MenuItem onClick={() => void handleExportStudents('xlsx')}>导出 Excel</MenuItem>
+                  <MenuItem onClick={() => void handleExportStudents('csv')}>导出 CSV</MenuItem>
+                </MenuList>
+              </MenuPopover>
+            </Menu>
             <Button appearance="primary" icon={<Add24Regular />} onClick={() => setCreateOpen(true)} disabled={busy}>
               新建学生
             </Button>
@@ -403,7 +441,6 @@ export function AdminStudentList() {
 
       <Caption1 style={{ color: t.colorNeutralForeground3 }}>
         {`当前筛选共 ${students.length} 名学生${debouncedQ ? `（关键词「${debouncedQ}」）` : ''}。`}
-        重置密码会即时生成一次性随机密码，只在弹窗里显示一次，可复制或下载 CSV 分发。
       </Caption1>
 
       {students.length === 0 ? (

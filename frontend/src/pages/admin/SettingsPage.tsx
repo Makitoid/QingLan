@@ -22,7 +22,7 @@ import {
   Text,
   tokens,
 } from '@fluentui/react-components';
-import { ArrowDownload24Regular, Delete24Regular, History24Regular, ImageAdd24Regular, Save24Regular } from '@fluentui/react-icons';
+import { ArrowDownload24Regular, Delete24Regular, ImageAdd24Regular, Save24Regular } from '@fluentui/react-icons';
 import { deleteBgImage, getAdminSettings, updateSettings, uploadBgImage } from '../../api';
 import type { BgMode } from '../../api/types';
 import { useSettings } from '../../context';
@@ -403,6 +403,11 @@ export function AdminSettingsPage() {
       <PageHeader
         title="系统设置"
         subtitle="修改会即时全站预览；点击「保存」后写入数据库，其他用户下次加载时生效。"
+        actions={
+          <Button appearance="primary" icon={<Save24Regular />} onClick={handleSave} disabled={busy || auditLoading}>
+            {busy ? '保存中…' : '保存设置'}
+          </Button>
+        }
       />
 
       {message && (
@@ -547,19 +552,8 @@ export function AdminSettingsPage() {
           <Caption1 style={{ color: t.colorNeutralForeground3 }}>
             关闭审计只停止写入新日志，已有记录不会被删除；重新开启后历史日志照常可见。填写保留天数后，超过该天数的日志会在应用启动、保存本页设置或下一次写入审计时自动清理；留空则永久保存。审计日志仅管理员可见、只读，不提供修改或删除入口。
           </Caption1>
-          <div>
-            <Button appearance="secondary" icon={<History24Regular />} onClick={() => navigate('/admin/audit')}>
-              查看审计日志
-            </Button>
-          </div>
         </div>
       </Card>
-
-      <div style={{ display: 'flex', justifyContent: 'flex-end' }}>
-        <Button appearance="primary" size="large" icon={<Save24Regular />} onClick={handleSave} disabled={busy || auditLoading}>
-          {busy ? '保存中…' : '保存设置'}
-        </Button>
-      </div>
 
       {/* 条件挂载：Fluent 的退出过渡在部分环境下不会触发 unmountOnClose，会留下带 modal 语义的残留节点 */}
       {oversize && (

@@ -269,6 +269,25 @@ export function exportAuditLogs(params: {
   );
 }
 
+/**
+ * 导出学生名单（0.3.2 F2）：与列表同筛选口径，format 支持 xlsx / csv。
+ * 走 `downloadBlob` 手动带 JWT —— `<a href>` 直链带不上 Authorization 头。
+ */
+export function exportStudents(params: {
+  format: 'xlsx' | 'csv';
+  q?: string;
+  groupId?: number | null;
+}): Promise<void> {
+  return downloadBlob(
+    `/admin/students/export${queryString({
+      format: params.format,
+      q: params.q?.trim(),
+      group_id: params.groupId ?? undefined,
+    })}`,
+    params.format === 'csv' ? '学生名单.csv' : '学生名单.xlsx',
+  );
+}
+
 /* ---------- 分组（GR-01：管理员是唯一写者） ---------- */
 
 export function listGroups(): Promise<GroupItem[]> {

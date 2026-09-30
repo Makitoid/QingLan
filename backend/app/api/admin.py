@@ -368,6 +368,46 @@ def create_student(body: AccountCreate, db: Session = Depends(get_db), admin: Us
     return student_to_out(user, [])
 
 
+@router.get("/admin/students/export")
+def export_students(format: str = Query(default="xlsx", pattern="^(xlsx|csv)$"),
+                    q: str | None = None, group_id: int | None = None,
+                    db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    """导出学生名单（0.3.2 F2）：与列表同筛选口径（q / group_id），支持 xlsx / csv。"""
+    query = db.query(User).filter(User.role == "student")
+    query = search_users(query, q)
+    if group_id is not None:
+        query = query.join(GroupMember, GroupMember.student_id == User.id).filter(
+            GroupMember.group_id == group_id
+        )
+    students = query.order_by(User.id).all()
+    teacher_map = stats.bound_teacher_map(db, [s.id for s in students])
+    group_map = groups_svc.groups_map_for_students(db, [s.id for s in students])
+    rows = [
+        {
+            "username": s.username,
+            "name": s.display_name,
+            "groups": [g.name for g in group_map.get(s.id, [])],
+            "teachers": [t.display_name for t in teacher_map.get(s.id, [])],
+            "is_active": bool(s.is_active),
+        }
+        for s in students
+    ]
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    if format == "csv":
+        payload = export_svc.build_students_csv(rows)
+        filename = f"学生名单-{stamp}.csv"
+        return StreamingResponse(
+            BytesIO(payload), media_type=export_svc.CSV_MEDIA_TYPE,
+            headers=export_svc.attachment_headers(filename),
+        )
+    payload = export_svc.build_students_xlsx(rows)
+    filename = f"学生名单-{stamp}.xlsx"
+    return StreamingResponse(
+        BytesIO(payload), media_type=export_svc.XLSX_MEDIA_TYPE,
+        headers=export_svc.attachment_headers(filename),
+    )
+
+
 def decode_text_bytes(raw: bytes) -> str:
     """文本编码兜底：utf-8-sig → gbk（沿用既有逻辑）。"""
     for encoding in ("utf-8-sig", "gbk"):

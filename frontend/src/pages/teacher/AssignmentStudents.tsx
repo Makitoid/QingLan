@@ -16,7 +16,6 @@ import {
   MessageBarBody,
   Spinner,
   Text,
-  Tooltip,
   tokens,
 
   type TableColumnDefinition,
@@ -60,23 +59,9 @@ function problemCell(item: AssignmentStudentRow, columnId: string): string {
   return score === null || score === undefined ? '' : fmtScore(score);
 }
 
-/** 题名列头：整题目标题过长时省略号收尾，完整标题交给 Fluent Tooltip（取主题令牌，暗色自适应）。 */
+/** 每题列的列头：只显示考试时的题号（第 N 题），不显示题目标题。 */
 function ProblemHeaderCell({ problem }: { problem: AssignmentProblemScore }) {
-  return (
-    <Tooltip content={problem.title} relationship="description">
-      <span
-        style={{
-          display: 'block',
-          maxWidth: 160,
-          overflow: 'hidden',
-          textOverflow: 'ellipsis',
-          whiteSpace: 'nowrap',
-        }}
-      >
-        {problem.title}
-      </span>
-    </Tooltip>
-  );
+  return <span>第 {problem.seq} 题</span>;
 }
 
 export function TeacherAssignmentStudents() {
@@ -112,7 +97,7 @@ export function TeacherAssignmentStudents() {
     }
     cols.push(
       createTableColumn({ columnId: 'last_submitted_at', renderHeaderCell: () => '最后提交时间' }),
-      createTableColumn({ columnId: 'drill', renderHeaderCell: () => '调分' }),
+      createTableColumn({ columnId: 'drill', renderHeaderCell: () => '查看详情' }),
     );
     return cols;
   }, [problemColumns]);
@@ -143,7 +128,7 @@ export function TeacherAssignmentStudents() {
         </Caption1>
         <PageHeader
           title="逐学生成绩"
-          subtitle="分数口径：「最高单题分」是得分最高的那道题，「总分」是题单内各题有效分之和；多题场次逐题成列，列顺序与导出 Excel 一致。"
+          subtitle="分数口径：「最高单题分」是得分最高的那道题，「总分」是题单内各题有效分之和。"
           actions={
             <Button
               appearance="secondary"
@@ -209,7 +194,7 @@ export function TeacherAssignmentStudents() {
                     {columnId === 'last_submitted_at' && fmtTime(item.last_submitted_at)}
                     {columnId === 'drill' && (
                       <Link to={studentScoresPath(assignmentId, item.student_id)} style={{ color: t.colorBrandForeground1 }}>
-                        调分
+                        查看详情
                       </Link>
                     )}
                   </DataGridCell>

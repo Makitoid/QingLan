@@ -230,7 +230,6 @@ export function AuditLogPage() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
       <PageHeader
         title="审计日志"
-        subtitle="密码重置、账号启停、分组与教师可教组别变更、导入与手动调分的关键操作记录；只读、按时间倒序。"
         actions={
           <>
             <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXXS }}>
@@ -241,7 +240,7 @@ export function AuditLogPage() {
                 selectedOptions={action ? [action] : []}
                 onOptionSelect={(_, d) => setAction(String(d.optionValue ?? ''))}
                 disabled={loading}
-                style={{ width: '240px' }}
+                style={{ width: '150px', minWidth: '150px' }}
               >
                 <Option value="" text="全部动作">
                   全部动作
@@ -261,7 +260,7 @@ export function AuditLogPage() {
                 selectedOptions={targetType ? [targetType] : []}
                 onOptionSelect={(_, d) => setTargetType(String(d.optionValue ?? ''))}
                 disabled={loading}
-                style={{ width: '160px' }}
+                style={{ width: '120px', minWidth: '120px' }}
               >
                 <Option value="" text="全部类型">
                   全部类型
@@ -289,7 +288,7 @@ export function AuditLogPage() {
               onClick={() => void exportXlsx()}
               style={{ alignSelf: 'flex-end' }}
             >
-              {exporting ? '导出中…' : '导出 Excel'}
+              {exporting ? '导出中…' : '导出'}
             </Button>
           </>
         }
@@ -339,7 +338,7 @@ export function AuditLogPage() {
                       )}
                       {columnId === 'actor_id' && (item.actor_id === null ? '—' : item.actor_id)}
                       {columnId === 'action' && (
-                        <Badge appearance="tint" size="large" style={{ alignSelf: 'flex-start' }}>
+                        <Badge appearance="tint" size="large">
                           {item.action_label || item.action}
                         </Badge>
                       )}

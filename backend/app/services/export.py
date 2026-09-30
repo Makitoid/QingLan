@@ -123,11 +123,68 @@ def build_assignment_students_xlsx(assignment_title: str, rows: list[dict], tz_o
 
 
 XLSX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+CSV_MEDIA_TYPE = "text/csv; charset=utf-8"
 
 
 def attachment_headers(filename: str) -> dict[str, str]:
     """Content-Disposition：RFC5987 filename* 传中文，另给 ASCII 兜底文件名。"""
-    safe = "".join(ch for ch in filename if ch.isascii() and (ch.isalnum() or ch in "._-")) or "export"
-    fallback = safe if safe.lower().endswith(".xlsx") else f"{safe}.xlsx"
-    quoted = quote(filename if filename.lower().endswith(".xlsx") else f"{filename}.xlsx", safe="")
-    return {"Content-Disposition": f"attachment; filename=\"{fallback}\"; filename*=UTF-8''{quoted}"}
+    ext = ".csv" if filename.lower().endswith(".csv") else ".xlsx"
+    safe = "".join(ch for ch in filename if ch.isascii() and (ch.isalnum() or ch in "._-"))
+    if not safe.lower().endswith(ext):
+        safe = f"export{ext}" if not safe else f"{safe}{ext}"
+    quoted = quote(filename if filename.lower().endswith(ext) else f"{filename}{ext}", safe="")
+    return {"Content-Disposition": f"attachment; filename=\"{safe}\"; filename*=UTF-8''{quoted}"}
+
+
+# ---------- 学生名单导出（admin 学生管理）----------
+
+STUDENTS_EXPORT_HEADER = ["学号", "姓名", "分组", "归属教师", "状态"]
+STUDENTS_EXPORT_WIDTHS = [16, 16, 20, 24, 10]
+
+
+def students_export_row(row: dict) -> list[str]:
+    """一行学生 → 导出单元格；多分组/多教师用「、」连接。"""
+    return [
+        row.get("username", ""),
+        row.get("name", ""),
+        "、".join(row.get("groups", [])),
+        "、".join(row.get("teachers", [])),
+        "启用" if row.get("is_active") else "已停用",
+    ]
+
+
+def build_students_xlsx(rows: list[dict]) -> bytes:
+    """学生名单 → xlsx 字节串，列固定：学号 | 姓名 | 分组 | 归属教师 | 状态。"""
+    openpyxl = load_openpyxl()
+    from openpyxl.styles import Font
+    from openpyxl.utils import get_column_letter
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "学生名单"
+    ws.append(STUDENTS_EXPORT_HEADER)
+    for cell in ws[1]:
+        cell.font = Font(bold=True)
+    ws.freeze_panes = "A2"
+    for idx, width in enumerate(STUDENTS_EXPORT_WIDTHS, start=1):
+        ws.column_dimensions[get_column_letter(idx)].width = width
+    for row in rows:
+        ws.append(students_export_row(row))
+
+    from io import BytesIO
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def build_students_csv(rows: list[dict]) -> bytes:
+    """学生名单 → csv 字节串；UTF-8 带 BOM，Excel 双击打开不乱码。"""
+    from csv import writer as csv_writer
+    from io import StringIO
+
+    buf = StringIO()
+    w = csv_writer(buf)
+    w.writerow(STUDENTS_EXPORT_HEADER)
+    for row in rows:
+        w.writerow(students_export_row(row))
+    return buf.getvalue().encode("utf-8-sig")

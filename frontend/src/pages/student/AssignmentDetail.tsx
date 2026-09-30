@@ -1,6 +1,6 @@
 import { useTheme } from '../../appTheme';
-import { Link, useParams } from 'react-router-dom';
-import { Badge, Caption1, createTableColumn, DataGrid, DataGridBody, DataGridCell, DataGridHeader, DataGridHeaderCell, DataGridRow, tokens, type TableColumnDefinition } from '@fluentui/react-components';
+import { Link, useNavigate, useParams } from 'react-router-dom';
+import { Badge, Button, Caption1, createTableColumn, DataGrid, DataGridBody, DataGridCell, DataGridHeader, DataGridHeaderCell, DataGridRow, tokens, type TableColumnDefinition } from '@fluentui/react-components';
 import { getStudentAssignment } from '../../api';
 import type { StudentAssignmentDetail as Detail, StudentAssignmentProblem } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
@@ -19,6 +19,7 @@ const columns: TableColumnDefinition<StudentAssignmentProblem>[] = [
 export function StudentAssignmentDetail() {
   const { id } = useParams();
   const t = useTheme();
+  const navigate = useNavigate();
   const assignmentId = Number(id);
   const { data, error, loading, reload } = useAsync<Detail>(() => getStudentAssignment(assignmentId), [assignmentId]);
 
@@ -28,6 +29,11 @@ export function StudentAssignmentDetail() {
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
+      <Caption1>
+        <Button appearance="subtle" size="small" onClick={() => navigate('/student/assignments')}>
+          ← 返回考试列表
+        </Button>
+      </Caption1>
       <PageHeader
         title={data.title}
         subtitle={<>时间窗：{fmtTime(data.start_time)} ~ {fmtTime(data.end_time)} · 计分策略：{data.score_policy === 'best' ? '取历次最高分' : '取最后一次提交'}</>}

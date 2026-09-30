@@ -1,0 +1,232 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>青蓝 QingLan · 图标设计说明</title>
+<style>
+  :root {
+    --font: "Segoe UI Variable Text", "Segoe UI", "Microsoft YaHei", system-ui, sans-serif;
+    --ink: #1b1b1b; --ink-2: #616161; --line: #e6e6e6; --page: #f3f3f3;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; padding: 40px 48px 120px; font-family: var(--font); background: var(--page); color: var(--ink); }
+  h1 { font-size: 26px; font-weight: 700; margin: 0 0 6px; }
+  h2 { font-size: 17px; font-weight: 600; margin: 52px 0 6px; }
+  h3 { font-size: 14px; font-weight: 600; margin: 24px 0 6px; color: var(--ink-2); }
+  p { margin: 0 0 10px; }
+  .lead { color: var(--ink-2); font-size: 13.5px; line-height: 1.7; max-width: 1024px; }
+  .card { background: #fff; border-radius: 12px; padding: 22px 24px 26px; box-shadow: 0 2px 6px rgba(0,0,0,.06), 0 0 0 1px rgba(0,0,0,.04); }
+  .row { display: flex; flex-wrap: wrap; gap: 22px; align-items: flex-end; }
+  .cell { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+  .plate { display: flex; align-items: flex-end; gap: 18px; padding: 20px; border-radius: 10px; }
+  .plate.l { background: #fff; box-shadow: inset 0 0 0 1px var(--line); }
+  .plate.d { background: #1b1b1b; }
+  .plate.s { background: #293138; }
+  .cap { font-size: 11px; color: var(--ink-2); font-variant-numeric: tabular-nums; }
+  svg { display: block; }
+  .hero { filter: drop-shadow(0 6px 16px rgba(0,0,0,.18)); }
+  table { border-collapse: collapse; width: 100%; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 14px 8px 0; border-bottom: 1px solid var(--line); vertical-align: top; font-weight: 400; }
+  th { color: var(--ink-2); font-weight: 600; width: 168px; }
+  code { font-family: "Cascadia Mono", Consolas, monospace; font-size: 12.5px; background: #f6f6f6; padding: 1px 5px; border-radius: 4px; }
+  .ctrl { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; margin: 14px 0 4px; }
+  .ctrl label { font-size: 12.5px; color: var(--ink-2); display: flex; align-items: center; gap: 8px; }
+  input[type=color] { width: 42px; height: 28px; border: 1px solid var(--line); border-radius: 6px; background: none; padding: 0; }
+  input[type=range] { width: 180px; }
+  textarea { width: 100%; min-height: 168px; font-family: "Cascadia Mono", Consolas, monospace; font-size: 11.5px;
+             border: 1px solid var(--line); border-radius: 8px; padding: 12px; background: #fbfbfb; resize: vertical; }
+  .lock { display: flex; align-items: center; gap: 14px; }
+  .lock .zh { font-size: 30px; font-weight: 700; letter-spacing: .04em; line-height: 1.05; }
+  .lock .en { font-size: 11px; color: var(--ink-2); letter-spacing: .14em; text-transform: uppercase; }
+  .acrylic {
+    position: relative; overflow: hidden; border-radius: 10px; padding: 18px 22px;
+    background: linear-gradient(135deg, rgba(125,175,219,.34), rgba(58,134,201,.22));
+    backdrop-filter: blur(18px) saturate(160%); -webkit-backdrop-filter: blur(18px) saturate(160%);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.5), inset 0 1px 0 rgba(255,255,255,.7);
+  }
+  .acrylic::after {
+    content: ""; position: absolute; inset: 0; opacity: .05; pointer-events: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='.8' numOctaves='3'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 20px; }
+  .pill { display: inline-block; font-size: 11px; padding: 2px 9px; border-radius: 999px; background: #eef4fa; color: #2c5f8a; margin-left: 8px; vertical-align: 2px; }
+</style>
+</head>
+<body>
+  <h1>青蓝 QingLan · 图标<span class="pill">Fluent 2</span></h1>
+  <p class="lead">
+    方案 A「出于蓝」。一笔白色从半透明的蓝环内部生出，穿过环上的缺口、越过环的外沿 ——
+    青，出于蓝而胜于蓝：学生从教师与平台这里长出去，长得比来源更亮。
+    这一笔的折角同时是判题的 <b>Accepted</b> 勾，环与出锋合起来读作字母 <b>Q</b>。
+    整套 UI 的品牌色由后台 <code>brand_color</code> 经 chroma 在 LAB 空间生成色阶，
+    所以图标只用<b>单一色相的纵向渐变 + 白色三级透明度</b>，后台换色不破图。
+  </p>
+
+  <div class="ctrl card">
+    <label>站点品牌色 <input type="color" id="brand" value="#0f6cbd"></label>
+    <label>底色提亮 <input type="range" id="tint" min="0" max="30" value="18"> <span class="cap" id="tintOut">18% → #3A86C9</span></label>
+    <label>暗色专属品牌色 <input type="color" id="brandDark" value="#4fa3e0"></label>
+    <span class="cap">改动只影响容器，笔画恒为白色；png/ 用 <code>render.ps1</code> 重新导出</span>
+  </div>
+
+  <h2>主图标</h2>
+  <div class="card row" id="heroRow"></div>
+
+  <h2>尺寸阶梯 · 16 / 24 / 32 / 48 / 64 / 96 / 128</h2>
+  <div class="card">
+    <div class="plate l" id="stripLight"></div>
+    <div class="plate d" id="stripDark" style="margin-top:14px"></div>
+    <h3>小尺寸光学补偿（≤24 px，左：默认权重 · 右：加粗笔画 + 提亮环）</h3>
+    <div class="plate l" id="stripOpt" style="background:#fafafa"></div>
+  </div>
+
+  <h2>用在真实界面上</h2>
+  <div class="grid2">
+    <div class="card">
+      <h3>浅色标题栏（亚克力层）</h3>
+      <div class="acrylic" id="barLight" style="display:flex;align-items:center;gap:14px"></div>
+      <h3>深色标题栏</h3>
+      <div class="acrylic" id="barDark" style="display:flex;align-items:center;gap:14px;background:linear-gradient(135deg,rgba(27,27,27,.72),rgba(41,49,56,.66));box-shadow:inset 0 0 0 1px rgba(255,255,255,.08)"></div>
+    </div>
+    <div class="card">
+      <h3>登录页锁定版</h3>
+      <div class="lock" id="lockup" style="flex-direction:column;gap:6px;padding:26px 0 10px"></div>
+      <p class="cap" style="text-align:center;margin-top:14px">28 px 图标 + 30 px 中文标题 + 11 px 英文副标，图标高度对齐标题 cap height</p>
+    </div>
+  </div>
+
+  <h2>单色与反白</h2>
+  <div class="card row" id="monoRow"></div>
+
+  <h2>规范</h2>
+  <div class="card">
+    <table>
+      <tr><th>网格</th><td>64 × 64 设计单位；容器四周留 2 单位给宿主投影（favicon 版满幅，圆角 13）</td></tr>
+      <tr><th>容器</th><td>圆角矩形 60 × 60，rx = 15（边长的 25%，Fluent 2 App Icon 比例）</td></tr>
+      <tr><th>容器填充</th><td>纵向 4 段单色相渐变，stops 0 / .16 / .52 / 1 = 提亮 46% / 提亮 22% / 基准 / 压暗 15%，顶部高光烘进渐变里，不叠半透明白层（会留接缝）</td></tr>
+      <tr><th>内描边</th><td>1.6 单位、白色 30%，仅 ≥32 px 出现</td></tr>
+      <tr><th>笔画</th><td>6.5 单位，圆头端点 + 圆角连接（对应 Fluent 16/20/24 图标的视觉权重）</td></tr>
+      <tr><th>蓝环</th><td>圆心 (31,36) r=12.5，自 −10° 顺时针 300°，右上留 60° 缺口供青笔穿出；白色 55% 不透明度</td></tr>
+      <tr><th>青笔</th><td>M26 33 → L28.5 38.5 → L47.6 19.3；起点在环内，45° 穿出缺口，末端距圆心 23.55 单位 &gt; 环外沿 15.75 单位；白色实心</td></tr>
+      <tr><th>层级</th><td>只用两级白：环 .55（承接）→ 笔 1.0（胜出）。不引入第二色相，保证换任何品牌色都成立</td></tr>
+      <tr><th>小尺寸</th><td>≤24 px 改由笔画粗细承担层级：环 5.0 单位 / .85，笔 9.0 单位，去内描边。同权重时环与勾会在 16 px 糊成一团</td></tr>
+      <tr><th>对比度</th><td>实心笔 / 容器 = 3.87:1（≥3.0 非文本底线）；提亮 18% 后容器 / 浅色页 = 3.48:1，容器 / 深色面 = 4.46:1</td></tr>
+      <tr><th>导出</th><td><code>design/qinglan-icon/render.ps1</code>（PowerShell + GDI+，无外部依赖）产出 png/ 12 档 + 校验图；<code>$env:QL_TONE</code> 调提亮量</td></tr>
+    </table>
+  </div>
+
+  <h2>可直接粘贴的 SVG（跟随上面选色）</h2>
+  <div class="card">
+    <textarea id="src" spellcheck="false"></textarea>
+    <p class="cap">在 React 里内联时，把四段 stop 换成 <code>var(--ql-icon-1…4)</code> 即可由 <code>useTheme()</code> 的 <code>colorBrandForeground1</code> 驱动；作为 favicon 文件时走默认色值。</p>
+  </div>
+
+<script>
+const SIZES = [16, 24, 32, 48, 64, 96, 128];
+const RING = 'M43.31 33.83 A12.5 12.5 0 1 1 35.275 24.254';
+const STROKE = 'M26 33 L28.5 38.5 L47.6 19.3';
+
+function hex2rgb(h) { h = h.replace('#', ''); return [0, 2, 4].map(i => parseInt(h.slice(i, i + 2), 16)); }
+function rgb2hex(c) { return '#' + c.map(v => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0')).join(''); }
+function mix(a, b, t) { const x = hex2rgb(a), y = hex2rgb(b); return rgb2hex(x.map((v, i) => v + (y[i] - v) * t)); }
+function ramp(brand, tint) {
+  const mid = mix(brand, '#ffffff', tint);
+  return [mix(mid, '#ffffff', 0.34), mix(mid, '#ffffff', 0.15), mid, mix(mid, '#000000', 0.15)];
+}
+function lum(h) {
+  const f = v => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+  const c = hex2rgb(h); return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+}
+function contrast(a, b) { const l = [lum(a), lum(b)].sort((x, y) => y - x); return ((l[0] + 0.05) / (l[1] + 0.05)).toFixed(2); }
+
+let uid = 0;
+function mark({ px, rs = ramp('#3a86c9', 0), ring = 0.55, ringW = 6.5, checkW = 6.5, hair = true,
+                full = false, mono = null, shadow = false }) {
+  const id = 'g' + (uid++);
+  const box = full ? [0, 0, 64, 64, 13] : [2, 2, 60, 60, 15];
+  const body = mono
+    ? `<path d="${RING}" stroke="${mono}" stroke-opacity="${ring}" stroke-width="${ringW}" stroke-linecap="round"/>
+       <path d="${STROKE}" stroke="${mono}" stroke-width="${checkW}" stroke-linecap="round" stroke-linejoin="round"/>`
+    : `<rect x="${box[0]}" y="${box[1]}" width="${box[2]}" height="${box[3]}" rx="${box[4]}" fill="url(#${id})"/>
+       ${hair ? `<rect x="${box[0] + 0.9}" y="${box[1] + 0.9}" width="${box[2] - 1.8}" height="${box[3] - 1.8}" rx="${box[4] - 0.9}" fill="none" stroke="#fff" stroke-opacity=".3" stroke-width="1.6"/>` : ''}
+       <path d="${RING}" stroke="#fff" stroke-opacity="${ring}" stroke-width="${ringW}" stroke-linecap="round"/>
+       <path d="${STROKE}" stroke="#fff" stroke-width="${checkW}" stroke-linecap="round" stroke-linejoin="round"/>`;
+  const grad = mono ? '' : `<defs><linearGradient id="${id}" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="${rs[0]}"/><stop offset=".16" stop-color="${rs[1]}"/>
+      <stop offset=".52" stop-color="${rs[2]}"/><stop offset="1" stop-color="${rs[3]}"/></linearGradient></defs>`;
+  return `<svg class="${shadow ? 'hero' : ''}" viewBox="0 0 64 64" width="${px}" height="${px}"
+      style="filter:${shadow ? '' : 'none'}" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="青蓝 QingLan">
+      ${grad}${body}</svg>`;
+}
+const cell = (px, html) => `<div class="cell">${html}<span class="cap">${px} px</span></div>`;
+
+function render() {
+  const brand = document.getElementById('brand').value;
+  const tint = +document.getElementById('tint').value / 100;
+  const dark = document.getElementById('brandDark').value;
+  const rs = ramp(brand, tint);
+  const mid = rs[2];
+  document.getElementById('tintOut').textContent = `${Math.round(tint * 100)}% → ${mid.toUpperCase()}`;
+
+  const big = (px) => mark({ px, rs, shadow: true });
+  document.getElementById('heroRow').innerHTML =
+    cell(256, big(256)) + cell(128, big(128)) + cell(64, big(64)) +
+    `<div class="cell" style="align-items:flex-start;max-width:520px">
+       <table><tr><th>当前色阶</th><td>${rs.map(c => `<span style="display:inline-block;width:34px;height:18px;border-radius:4px;background:${c};vertical-align:-4px;margin-right:4px"></span><code>${c}</code>`).join(' ')}</td></tr>
+       <tr><th>笔画 / 容器</th><td>${contrast('#ffffff', mid)} : 1 <span class="cap">（非文本底线 3.0）</span></td></tr>
+       <tr><th>容器 / 浅色页</th><td>${contrast(mid, '#f3f3f3')} : 1</td></tr>
+       <tr><th>容器 / 深色面</th><td>${contrast(mid, '#1b1b1b')} : 1</td></tr>
+       <tr><th>暗色模式容器</th><td>${ramp(dark, tint).map(c => `<span style="display:inline-block;width:22px;height:14px;border-radius:3px;background:${c};vertical-align:-2px;margin-right:3px"></span>`).join('')} <code>${ramp(dark, tint)[2]}</code> <span class="cap">对应 brand_color_dark</span></td></tr></table>
+     </div>`;
+
+  document.getElementById('stripLight').innerHTML =
+    SIZES.map(px => cell(px, mark({ px, rs, full: px <= 24, ring: px <= 24 ? 0.85 : 0.55, ringW: px <= 24 ? 5 : 6.5, checkW: px <= 24 ? 9 : 6.5, hair: px > 24 }))).join('');
+  document.getElementById('stripDark').innerHTML =
+    SIZES.map(px => cell(px, mark({ px, rs: ramp(dark, tint), full: px <= 24, ring: px <= 24 ? 0.85 : 0.6, ringW: px <= 24 ? 5 : 6.5, checkW: px <= 24 ? 9 : 6.5, hair: px > 24 }))).join('');
+  document.getElementById('stripOpt').innerHTML =
+    [16, 20, 24].map(px => cell(px, mark({ px, rs, full: true, ring: 0.55, hair: false }))).join('') +
+    `<div style="width:1px;align-self:stretch;background:var(--line);margin:0 10px"></div>` +
+    [16, 20, 24].map(px => cell(px, mark({ px, rs, full: true, ring: 0.85, ringW: 5, checkW: 9, hair: false }))).join('');
+
+  document.getElementById('barLight').innerHTML =
+    mark({ px: 28, rs, ring: 0.55, hair: false }) +
+    `<span style="font-size:19px;font-weight:700;color:${mix(mid, '#000000', 0.35)}">青蓝</span>
+     <span style="font-size:13px;color:#5b6b78;margin-left:auto">发布 · 题库 · 学生</span>`;
+  document.getElementById('barDark').innerHTML =
+    mark({ px: 28, rs: ramp(dark, tint), ring: 0.6, hair: false }) +
+    `<span style="font-size:19px;font-weight:700;color:#ffffff">青蓝</span>
+     <span style="font-size:13px;color:#a6b3bd;margin-left:auto">教师管理 · 学生管理 · 审计日志</span>`;
+  document.getElementById('lockup').innerHTML =
+    mark({ px: 72, rs, shadow: true }) +
+    `<div style="text-align:center"><div class="zh" style="color:${mix(mid, '#000000', 0.3)}">青蓝</div>
+      <div class="en">QingLan · C 语言练习与测评平台</div></div>`;
+
+  document.getElementById('monoRow').innerHTML =
+    cell(96, mark({ px: 96, rs, mono: mid })) +
+    cell(96, mark({ px: 96, rs, mono: '#1b1b1b', ring: 0.45 })) +
+    `<div class="cell"><div class="plate s" style="padding:18px">${mark({ px: 96, rs, mono: '#ffffff', ring: 0.5 })}</div><span class="cap">反白 · 深底/照片</span></div>` +
+    `<div class="cell"><div class="plate l" style="padding:18px">${mark({ px: 96, rs, full: true })}</div><span class="cap">容器版</span></div>` +
+    `<div class="cell"><div class="plate l" style="padding:18px">${mark({ px: 96, rs, full: true, ring: 0.85, ringW: 5, checkW: 9, hair: false })}</div><span class="cap">满幅 · 小尺寸</span></div>`;
+
+  document.getElementById('src').value =
+`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="青蓝 QingLan">
+  <defs>
+    <linearGradient id="ql-shell" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="var(--ql-icon-1, ${rs[0]})"/>
+      <stop offset=".16" stop-color="var(--ql-icon-2, ${rs[1]})"/>
+      <stop offset=".52" stop-color="var(--ql-icon-3, ${rs[2]})"/>
+      <stop offset="1" stop-color="var(--ql-icon-4, ${rs[3]})"/>
+    </linearGradient>
+  </defs>
+  <rect x="2" y="2" width="60" height="60" rx="15" fill="url(#ql-shell)"/>
+  <rect x="2.9" y="2.9" width="58.2" height="58.2" rx="14.1" fill="none" stroke="#fff" stroke-opacity=".3" stroke-width="1.6"/>
+  <path d="${RING}" fill="none" stroke="#fff" stroke-opacity=".55" stroke-width="6.5" stroke-linecap="round"/>
+  <path d="${STROKE}" fill="none" stroke="#fff" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>`;
+}
+['brand', 'tint', 'brandDark'].forEach(id => document.getElementById(id).addEventListener('input', render));
+render();
+</script>
+</body>
+</html>
