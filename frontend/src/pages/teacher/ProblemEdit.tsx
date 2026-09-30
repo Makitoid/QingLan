@@ -50,6 +50,7 @@ import { NumberInput } from '../../components/NumberInput';
 import { PageHeader } from '../../components/PageHeader';
 import { useDangerStyles } from '../../components/dangerStyles';
 import { fmtTimeWithSeconds } from '../../components/time';
+import { useRouteFrom } from '../../components/routeFrom';
 
 const COMPARE_OPTIONS: { value: CompareMode; label: string }[] = [
   { value: 'trim', label: 'trim · 忽略行尾空白与末尾空行（默认）' },
@@ -189,6 +190,8 @@ export function TeacherProblemEdit() {
   const t = useTheme();
   const danger = useDangerStyles();
   const navigate = useNavigate();
+  /** F6：从统计/判分上下文带 ?from= 进来时，返回沿来源原路退回。 */
+  const { from, backTo } = useRouteFrom('/teacher/problems');
   const { data, error, loading, reload } = useAsync<ProblemDetail>(() => getTeacherProblem(problemId), [problemId]);
 
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
@@ -281,7 +284,7 @@ export function TeacherProblemEdit() {
 
   /* ---------- 草稿：离开时询问 ---------- */
 
-  const goBack = () => navigate('/teacher/problems');
+  const goBack = () => navigate(backTo);
 
   const handleBack = () => {
     if (!dirty) {
@@ -400,7 +403,7 @@ export function TeacherProblemEdit() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL }}>
       <div>
         <Caption1>
-          <Button appearance="subtle" size="small" onClick={handleBack}>← 返回题库</Button>
+          <Button appearance="subtle" size="small" onClick={handleBack}>{from ? '← 返回' : '← 返回题库'}</Button>
         </Caption1>
         <PageHeader
           title={
@@ -576,7 +579,7 @@ export function TeacherProblemEdit() {
         </DialogSurface>
       </Dialog>
 
-      {/* 需求⑧：返回题库时若表单脏了，问要不要留草稿 */}
+      {/* 需求⑧：返回时若表单脏了，问要不要留草稿 */}
       <Dialog open={leaveOpen} onOpenChange={(_, d) => { if (!d.open && !leaveBusy) setLeaveOpen(false); }}>
         <DialogSurface>
           <DialogBody>

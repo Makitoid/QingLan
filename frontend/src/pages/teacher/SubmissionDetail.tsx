@@ -178,7 +178,12 @@ export function TeacherSubmissionPage() {
               {data.problem_title && (
                 <>
                   题目：
-                  <Link to={`/teacher/problems/${data.problem_id}`} style={{ color: t.colorBrandForeground1 }}>{data.problem_title}</Link>
+                  <Link
+                    to={`/teacher/problems/${data.problem_id}/view?from=${encodeURIComponent(`/teacher/assignments/${data.assignment_id}`)}`}
+                    style={{ color: t.colorBrandForeground1 }}
+                  >
+                    {data.problem_title}
+                  </Link>
                   {' · '}
                 </>
               )}

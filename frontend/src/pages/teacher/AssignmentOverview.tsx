@@ -159,7 +159,10 @@ export function TeacherAssignmentOverview() {
                   {({ columnId }) => (
                     <DataGridCell>
                       {columnId === 'title' && (
-                        <Link to={`/teacher/problems/${item.problem_id}`} style={{ color: t.colorBrandForeground1 }}>
+                        <Link
+                          to={`/teacher/problems/${item.problem_id}/view?from=${encodeURIComponent(`/teacher/assignments/${assignmentId}`)}`}
+                          style={{ color: t.colorBrandForeground1 }}
+                        >
                           {item.title}
                         </Link>
                       )}

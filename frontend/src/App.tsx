@@ -22,6 +22,7 @@ import { StudentSubmissionPage } from './pages/student/SubmissionDetail';
 
 import { TeacherProblemList } from './pages/teacher/ProblemList';
 import { TeacherProblemEdit } from './pages/teacher/ProblemEdit';
+import { TeacherProblemView } from './pages/teacher/ProblemView';
 import TeacherStudentList from './pages/teacher/StudentList';
 import { TeacherAssignmentList } from './pages/teacher/AssignmentList';
 import { TeacherAssignmentNew } from './pages/teacher/AssignmentNew';
@@ -89,6 +90,7 @@ function ThemedApp() {
                 <Route element={<RequireAuth roles={['teacher']} />}>
                   <Route path="/teacher/problems" element={<TeacherProblemList />} />
                   <Route path="/teacher/problems/:id" element={<TeacherProblemEdit />} />
+                  <Route path="/teacher/problems/:id/view" element={<TeacherProblemView />} />
                   <Route path="/teacher/assignments" element={<TeacherAssignmentList />} />
                   <Route path="/teacher/assignments/new" element={<TeacherAssignmentNew />} />
                   <Route path="/teacher/assignments/:id" element={<TeacherAssignmentOverview />} />
