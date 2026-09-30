@@ -404,6 +404,16 @@ export interface AssignmentOverview {
   submitted_students: number;
   per_problem: OverviewPerProblem[];
   histogram: HistogramBucket[];
+  /**
+   * 0.4.0 F4：班级总分指标。总分 = 题单内每题有效分之和（未交按 0 计），
+   * 与 `AssignmentStudentRow.total_score` 同一口径；及格线 = `full_score_sum * 0.6`。
+   * 受众为空时 avg/pass_rate 为 0，max/min 为 null。
+   */
+  avg_total_score?: number;
+  pass_rate?: number;
+  max_total_score?: number | null;
+  min_total_score?: number | null;
+  full_score_sum?: number;
 }
 
 /** SC-01：场次成绩行里「每题的有效分」（未提交为 null）。 */

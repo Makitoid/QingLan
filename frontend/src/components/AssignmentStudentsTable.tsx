@@ -1,0 +1,191 @@
+import { useTheme } from '../appTheme';
+import { useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
+import {
+  Badge,
+  Button,
+  Caption1,
+  createTableColumn, DataGrid,
+  DataGridBody,
+  DataGridCell,
+  DataGridHeader,
+  DataGridHeaderCell,
+  DataGridRow,
+  Spinner,
+  Text,
+  tokens,
+
+  type TableColumnDefinition,
+} from '@fluentui/react-components';
+import { ArrowDownload24Regular } from '@fluentui/react-icons';
+import { exportAssignmentStudents, getAssignmentStudents } from '../api';
+import type { AssignmentProblemScore, AssignmentStudentRow } from '../api/types';
+import { useAsync } from './useAsync';
+import { LoadingView, ErrorView, EmptyView, errMessage } from './StateViews';
+import { fmtTime } from './time';
+import { fmtScore } from './score';
+
+/** 每题得分列的 id 前缀，列 id 里带 problem_id 以便单元格回查该题的分。 */
+const PROBLEM_COL_PREFIX = 'problem:';
+const problemColumnId = (problemId: number) => `${PROBLEM_COL_PREFIX}${problemId}`;
+
+/**
+ * F6：逐学生按题调分页路径——行内所有入口（每题得分 / 调分列）都落到这里。
+ * 0.4.0 F4 把表格搬进总览页时链接口径暂不动，F5 删下钻页后改指判分页。
+ */
+const studentScoresPath = (assignmentId: number, studentId: number) =>
+  `/teacher/assignments/${assignmentId}/students/${studentId}`;
+
+/**
+ * 每题列的题单：后端保证每行的 problem_scores 同序（即题单 seq），取第一行推导即可；
+ * 没有数据（空表 / 首行无题单）时退回固定列。
+ *
+ * 只有一道题时不出题名列——那一列与「总分」恒等，并排两列反而让教师误读成两个口径。
+ */
+function problemColumnsFor(rows: AssignmentStudentRow[] | null | undefined): AssignmentProblemScore[] {
+  const first = rows?.[0]?.problem_scores ?? [];
+  return first.length > 1 ? [...first].sort((a, b) => a.seq - b.seq) : [];
+}
+
+/**
+ * 某题得分单元格。未提交该题（effective_score 为 null）显示**空**，
+ * 与导出的 xlsx 一致（那里写空串，见 services/export.py），不写 0 也不写「—」。
+ * F6 起同一单元格同时是逐题调分入口（外层的 Link 由调用处包）。
+ */
+function problemCell(item: AssignmentStudentRow, columnId: string): string {
+  const problemId = Number(columnId.slice(PROBLEM_COL_PREFIX.length));
+  const score = item.problem_scores?.find((p) => p.problem_id === problemId)?.effective_score;
+  return score === null || score === undefined ? '' : fmtScore(score);
+}
+
+/** 每题列的列头：只显示考试时的题号（第 N 题），不显示题目标题。 */
+function ProblemHeaderCell({ problem }: { problem: AssignmentProblemScore }) {
+  return <span>第 {problem.seq} 题</span>;
+}
+
+/**
+ * 0.4.0 F4：导出 Excel 的状态（表格嵌进总览卡片时，按钮要落在卡片头部，故与表格拆开）。
+ */
+export function useAssignmentStudentsExport(assignmentId: number) {
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
+
+  const handleExport = async () => {
+    if (exporting) return; // 防重复点击
+    setExporting(true);
+    setExportError(null);
+    try {
+      await exportAssignmentStudents(assignmentId);
+    } catch (err) {
+      setExportError(`导出失败：${errMessage(err)}`);
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const exportButton = (
+    <Button
+      appearance="secondary"
+      icon={exporting ? <Spinner size="tiny" /> : <ArrowDownload24Regular />}
+      disabled={exporting}
+      onClick={handleExport}
+    >
+      {exporting ? '导出中…' : '导出 Excel'}
+    </Button>
+  );
+
+  return { exporting, exportError, handleExport, exportButton };
+}
+
+/**
+ * 0.4.0 F4：逐学生成绩表（原 /teacher/assignments/:id/students 页面主体），
+ * 现内嵌进场次总览的「学生答题情况」块。自己取数、自己出动态每题列。
+ */
+export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number }) {
+  const t = useTheme();
+  const { data, error, loading, reload } = useAsync<AssignmentStudentRow[]>(
+    () => getAssignmentStudents(assignmentId),
+    [assignmentId],
+  );
+
+  // 列顺序与导出的 xlsx 对齐：学号 | 姓名 | 提交次数 | 最高单题分 | 总分 | 每题得分 | 最后提交时间。
+  // 「总分」紧跟「最高单题分」，教师对照导出时两列相邻；每题列插在它之后、时间列之前。
+  const problemColumns = useMemo(() => problemColumnsFor(data), [data]);
+  const columns = useMemo<TableColumnDefinition<AssignmentStudentRow>[]>(() => {
+    const cols: TableColumnDefinition<AssignmentStudentRow>[] = [
+      createTableColumn({ columnId: 'username', renderHeaderCell: () => '学号' }),
+      createTableColumn({ columnId: 'name', renderHeaderCell: () => '姓名' }),
+      createTableColumn({ columnId: 'submitted_count', renderHeaderCell: () => '提交次数' }),
+      createTableColumn({ columnId: 'best', renderHeaderCell: () => '最高单题分' }),
+      createTableColumn({ columnId: 'total', renderHeaderCell: () => '总分' }),
+    ];
+    for (const problem of problemColumns) {
+      cols.push(
+        createTableColumn({
+          columnId: problemColumnId(problem.problem_id),
+          renderHeaderCell: () => <ProblemHeaderCell problem={problem} />,
+        }),
+      );
+    }
+    cols.push(
+      createTableColumn({ columnId: 'last_submitted_at', renderHeaderCell: () => '最后提交时间' }),
+      createTableColumn({ columnId: 'drill', renderHeaderCell: () => '查看详情' }),
+    );
+    return cols;
+  }, [problemColumns]);
+
+  if (loading) return <LoadingView />;
+  if (error) return <ErrorView error={error} onRetry={reload} />;
+
+  return data && data.length === 0 ? (
+    <EmptyView title="暂无学生" description="该场次受众为空，请检查教师↔学生绑定关系。" />
+  ) : (
+    <DataGrid items={data ?? []} columns={columns} focusMode="cell" resizableColumns>
+      <DataGridHeader>
+        <DataGridRow>
+          {({ renderHeaderCell }) => <DataGridHeaderCell>{renderHeaderCell()}</DataGridHeaderCell>}
+        </DataGridRow>
+      </DataGridHeader>
+      <DataGridBody<AssignmentStudentRow>>
+        {({ item, rowId }) => (
+          <DataGridRow<AssignmentStudentRow> key={rowId}>
+            {({ columnId }) => (
+              <DataGridCell>
+                {columnId === 'username' &&
+                  (item.username ? (
+                    item.username
+                  ) : (
+                    <Caption1 style={{ color: t.colorNeutralForeground4 }}>—</Caption1>
+                  ))}
+                {columnId === 'name' && (
+                  <Text>
+                    {item.name}
+                    {item.submitted_count === 0 && (
+                      <Badge size="large" style={{ marginLeft: tokens.spacingHorizontalS, color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
+                        未交
+                      </Badge>
+                    )}
+                  </Text>
+                )}
+                {columnId === 'submitted_count' && item.submitted_count}
+                {columnId === 'best' && fmtScore(item.best_effective_score)}
+                {columnId === 'total' && fmtScore(item.total_score)}
+                {typeof columnId === 'string' && columnId.startsWith(PROBLEM_COL_PREFIX) && (
+                  <Link to={studentScoresPath(assignmentId, item.student_id)} style={{ color: t.colorBrandForeground1 }}>
+                    {problemCell(item, columnId)}
+                  </Link>
+                )}
+                {columnId === 'last_submitted_at' && fmtTime(item.last_submitted_at)}
+                {columnId === 'drill' && (
+                  <Link to={studentScoresPath(assignmentId, item.student_id)} style={{ color: t.colorBrandForeground1 }}>
+                    查看详情
+                  </Link>
+                )}
+              </DataGridCell>
+            )}
+          </DataGridRow>
+        )}
+      </DataGridBody>
+    </DataGrid>
+  );
+}

@@ -481,6 +481,13 @@ class OverviewOut(BaseModel):
     submitted_students: int
     per_problem: list[PerProblemStat]
     histogram: list[HistogramBin]
+    # 0.4.0 F4：班级总分指标（总分口径同 student_rows.total_score，未交学生按 0 计入）。
+    # 均带默认值，旧客户端与既有断言不受影响。
+    avg_total_score: float = 0.0
+    pass_rate: float = 0.0
+    max_total_score: float | None = None
+    min_total_score: float | None = None
+    full_score_sum: float = 0.0
 
 
 class StudentProblemScoreOut(BaseModel):
