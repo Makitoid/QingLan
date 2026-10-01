@@ -38,6 +38,7 @@ import { CodeEditor } from '../../components/CodeEditor';
 import { StatusBadge, VerdictBadge } from '../../components/VerdictBadge';
 import { PageHeader } from '../../components/PageHeader';
 import { ProblemSwitchNav } from '../../components/ProblemSwitchNav';
+import { ProblemCases } from '../../components/ProblemCases';
 import { MarkdownBody } from '../../components/Markdown';
 
 const COMPARE_LABELS: Record<CompareMode, string> = { exact: '精确', trim: '忽略空白', float: '浮点容差' };
@@ -50,28 +51,6 @@ const columns: TableColumnDefinition<SubmissionResultRow>[] = [
   createTableColumn({ columnId: 'memory', renderHeaderCell: () => '内存' }),
   createTableColumn({ columnId: 'score', renderHeaderCell: () => '得分' }),
 ];
-
-/** 原题预览里的样例输入/输出块，样式与学生端题面页一致。 */
-function PreBlock({ text }: { text: string }) {
-  const t = useTheme();
-  return (
-    <pre
-      style={{
-        margin: 0,
-        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-        backgroundColor: t.colorSubtleBackground,
-        border: `1px solid ${t.colorNeutralStroke2}`,
-        borderRadius: tokens.borderRadiusMedium,
-        fontFamily: "'Cascadia Code', Consolas, 'Courier New', monospace",
-        fontSize: tokens.fontSizeBase200,
-        whiteSpace: 'pre-wrap',
-        wordBreak: 'break-all',
-      }}
-    >
-      {text}
-    </pre>
-  );
-}
 
 export function TeacherSubmissionPage() {
   const { sid } = useParams();
@@ -291,27 +270,7 @@ export function TeacherSubmissionPage() {
               <MarkdownBody>{problem.input_format}</MarkdownBody>
               <Text weight="semibold">输出格式</Text>
               <MarkdownBody>{problem.output_format}</MarkdownBody>
-              {problem.cases.some((c) => c.is_sample) && <Divider />}
-              {problem.cases.filter((c) => c.is_sample).map((c) => (
-                <div
-                  key={c.id}
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: '1fr 1fr',
-                    gap: tokens.spacingHorizontalM,
-                    marginTop: tokens.spacingVerticalS,
-                  }}
-                >
-                  <div>
-                    <Caption1 style={{ color: t.colorNeutralForeground3 }}>样例 {c.seq} 输入</Caption1>
-                    <PreBlock text={c.input} />
-                  </div>
-                  <div>
-                    <Caption1 style={{ color: t.colorNeutralForeground3 }}>样例 {c.seq} 输出</Caption1>
-                    <PreBlock text={c.expected} />
-                  </div>
-                </div>
-              ))}
+              <ProblemCases cases={problem.cases} />
             </>
           ) : null}
         </Card>

@@ -16,31 +16,10 @@ import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView } from '../../components/StateViews';
 import { PageHeader } from '../../components/PageHeader';
 import { MarkdownBody } from '../../components/Markdown';
+import { ProblemCases } from '../../components/ProblemCases';
 import { useRouteFrom } from '../../components/routeFrom';
 
 const COMPARE_LABELS: Record<CompareMode, string> = { exact: '精确', trim: '忽略空白', float: '浮点容差' };
-
-/** 样例输入/输出块，样式与学生端题面页一致。 */
-function PreBlock({ text }: { text: string }) {
-  const t = useTheme();
-  return (
-    <pre
-      style={{
-        margin: 0,
-        padding: `${tokens.spacingVerticalS} ${tokens.spacingHorizontalM}`,
-        backgroundColor: t.colorSubtleBackground,
-        border: `1px solid ${t.colorNeutralStroke2}`,
-        borderRadius: tokens.borderRadiusMedium,
-        fontFamily: "'Cascadia Code', Consolas, 'Courier New', monospace",
-        fontSize: tokens.fontSizeBase200,
-        whiteSpace: 'pre-wrap',
-        wordBreak: 'break-all',
-      }}
-    >
-      {text}
-    </pre>
-  );
-}
 
 /** 题目只读查看页：从统计/判分上下文点题目时进这里，编辑动作在页头。 */
 export function TeacherProblemView() {
@@ -59,7 +38,6 @@ export function TeacherProblemView() {
   if (!data) return null;
 
   const group = (data.group_name ?? '').trim();
-  const samples = data.cases.filter((c) => c.is_sample);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL }}>
@@ -105,27 +83,7 @@ export function TeacherProblemView() {
         <Text weight="semibold">输出格式</Text>
         <MarkdownBody>{data.output_format}</MarkdownBody>
 
-        {samples.length > 0 && <Divider />}
-        {samples.map((c) => (
-          <div
-            key={c.id}
-            style={{
-              display: 'grid',
-              gridTemplateColumns: '1fr 1fr',
-              gap: tokens.spacingHorizontalM,
-              marginTop: tokens.spacingVerticalS,
-            }}
-          >
-            <div>
-              <Caption1 style={{ color: t.colorNeutralForeground3 }}>样例 {c.seq} 输入</Caption1>
-              <PreBlock text={c.input} />
-            </div>
-            <div>
-              <Caption1 style={{ color: t.colorNeutralForeground3 }}>样例 {c.seq} 输出</Caption1>
-              <PreBlock text={c.expected} />
-            </div>
-          </div>
-        ))}
+        <ProblemCases cases={data.cases} />
       </Card>
     </div>
   );
