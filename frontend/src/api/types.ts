@@ -179,6 +179,17 @@ export interface AuditLogPage {
   total: number;
 }
 
+/** 筛选下拉候选项：value 是接口参数，label 是中文名。 */
+export interface LabelOption {
+  value: string;
+  label: string;
+}
+
+export interface AuditLogFilters {
+  actions: LabelOption[];
+  targets: LabelOption[];
+}
+
 /* ---------- admin ---------- */
 
 export interface TeacherItem {

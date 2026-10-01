@@ -34,19 +34,21 @@ from ..core.security import (APIError, generate_temp_password,
                              utcnow_str)
 from ..models import (AuditLog, Group, GroupMember, SiteSetting, TeacherGroup,
                       TeacherNotice, TeacherStudent, User)
-from ..schemas import (AccountCreate, AdminSettingsOut, AuditLogOut, AuditLogPageOut,
+from ..schemas import (AccountCreate, AdminSettingsOut, AuditLogFiltersOut, AuditLogOut, AuditLogPageOut,
                        BatchActiveRequest, BatchResetPasswordRequest, BatchResetResultOut,
                        BindStudentsRequest, GroupCreate, GroupMembershipOut, GroupMembersRequest,
                        GroupOut, GroupRef,
                        GroupUpdate, ImportFailure, ImportResult, IsActivePatch,
+                       LabelOptionOut,
                        RosterEntryOut, SettingsOut, SettingsUpdate, StudentOut,
                        TeacherGroupsOut, TeacherGroupsRequest, TeacherOut,
                        TeacherRosterOut, TempCredentialOut, UserOut)
 from ..services import export as export_svc
 from ..services import groups as groups_svc
 from ..services import stats
-from ..services.audit import (AUDIT_EXPORT_MAX_ROWS, AUDIT_RETENTION_MAX_DAYS,
-                              AUDIT_RETENTION_MIN_DAYS, action_label, audit_enabled,
+from ..services.audit import (AUDIT_ACTION_LABELS, AUDIT_EXPORT_MAX_ROWS,
+                              AUDIT_RETENTION_MAX_DAYS, AUDIT_RETENTION_MIN_DAYS,
+                              AUDIT_TARGET_LABELS, action_label, audit_enabled,
                               build_audit_logs_xlsx, invalidate_audit_cache, log_audit,
                               prune_expired, retention_cutoff, target_label)
 
@@ -830,6 +832,15 @@ def list_audit_logs(action: str | None = None, target_type: str | None = None,
     actors = audit_actors(db, rows)
     actor_names = {i: f"{u.display_name}({u.username})" for i, u in actors.items()}
     return AuditLogPageOut(items=[audit_row_to_out(r, actor_names) for r in rows], total=total)
+
+
+@router.get("/admin/audit_logs/filters", response_model=AuditLogFiltersOut)
+def audit_log_filters(_: User = Depends(require_admin)):
+    """筛选下拉候选（0.4.1 FIX）：候选与中文名只有服务端这一份字典。"""
+    return AuditLogFiltersOut(
+        actions=[LabelOptionOut(value=k, label=v) for k, v in AUDIT_ACTION_LABELS.items()],
+        targets=[LabelOptionOut(value=k, label=v) for k, v in AUDIT_TARGET_LABELS.items()],
+    )
 
 
 @router.get("/admin/audit_logs/export")

@@ -216,6 +216,18 @@ class AuditLogPageOut(BaseModel):
     total: int
 
 
+class LabelOptionOut(BaseModel):
+    """筛选下拉的一个候选项：value 给接口用，label 给人看。"""
+    value: str
+    label: str
+
+
+class AuditLogFiltersOut(BaseModel):
+    """审计日志筛选候选：字典顺序即下拉展示顺序（按业务分组，不按字母排）。"""
+    actions: list[LabelOptionOut]
+    targets: list[LabelOptionOut]
+
+
 class BatchActiveRequest(BaseModel):
     student_ids: list[int]
     is_active: bool

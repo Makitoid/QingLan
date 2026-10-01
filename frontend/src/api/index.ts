@@ -16,6 +16,7 @@ import type {
   BatchResetMode,
   BatchResetResult,
   AuditLogPage,
+  AuditLogFilters,
   CreateTeacherBody,
   CreateStudentBody,
   ImportResult,
@@ -249,6 +250,11 @@ export function adminBatchActive(studentIds: number[], isActive: boolean): Promi
 }
 
 /* ---------- admin: 审计日志（AU-05 / AU-06） ---------- */
+
+/** 动作 / 对象类型的候选项与中文名，服务端字典是唯一真相（0.4.1 FIX）。 */
+export function getAuditLogFilters(): Promise<AuditLogFilters> {
+  return request<AuditLogFilters>('/admin/audit_logs/filters');
+}
 
 /** 只读、按 created_at 倒序；分页靠 `limit` / `offset`，`total` 判断是否还有下一页。 */
 export function listAuditLogs(params: {

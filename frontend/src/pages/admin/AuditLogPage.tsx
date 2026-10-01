@@ -21,8 +21,8 @@ import {
   type TableColumnDefinition,
 } from '@fluentui/react-components';
 import { ArrowExportUp24Regular, ArrowSync24Regular, ChevronDown24Regular } from '@fluentui/react-icons';
-import { exportAuditLogs, listAuditLogs } from '../../api';
-import type { AuditLogItem } from '../../api/types';
+import { exportAuditLogs, getAuditLogFilters, listAuditLogs } from '../../api';
+import type { AuditLogFilters, AuditLogItem, LabelOption } from '../../api/types';
 import { EmptyView, ErrorView, errMessage } from '../../components/StateViews';
 import { PageHeader } from '../../components/PageHeader';
 import { fmtTimeWithSeconds } from '../../components/time';
@@ -31,37 +31,13 @@ import { fmtTimeWithSeconds } from '../../components/time';
 const PAGE_SIZE = 50;
 
 /**
- * 下拉候选的「已知动作 / 对象类型」清单（《修改意见》附录 A）。
- * 中文名一律取服务端下发的 action_label / target_label，本文件不再维护第二份字典。
+ * 下拉候选 = 服务端字典（顺序即展示顺序，按业务分组而非字母序）∪ 本次已加载数据里出现过的值。
+ * 中文名一律取服务端下发，本文件不维护第二份字典。
  */
-const KNOWN_ACTIONS = [
-  'student_create_pw',
-  'student_reset_pw',
-  'student_batch_reset_pw',
-  'teacher_create_pw',
-  'teacher_reset_pw',
-  'user_change_password',
-  'user_is_active_change',
-  'group_create',
-  'group_update',
-  'group_delete',
-  'group_member_change',
-  'teacher_group_assign',
-  'teacher_student_bind',
-  'teacher_student_unbind',
-  'subgroup_create',
-  'subgroup_update',
-  'subgroup_delete',
-  'subgroup_member_change',
-  'student_import',
-  'score_manual_adjust',
-];
-
-const KNOWN_TARGETS = ['user', 'student', 'teacher', 'group', 'subgroup', 'submission', 'problem', 'assignment'];
-
-/** 下拉候选 = 已知清单 ∪ 本次已加载数据里出现过的值（后端新增动作也不会漏）。 */
-function optionValues(known: string[], seen: string[]): string[] {
-  return Array.from(new Set([...known, ...seen])).sort();
+function buildOptions(known: LabelOption[], seen: { value: string; label: string }[]): LabelOption[] {
+  const out = new Map(known.map((o) => [o.value, o.label]));
+  for (const s of seen) if (!out.has(s.value)) out.set(s.value, s.label);
+  return Array.from(out, ([value, label]) => ({ value, label }));
 }
 
 function formatValue(value: unknown): string {
@@ -154,14 +130,11 @@ export function AuditLogPage() {
   const [error, setError] = useState<unknown | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
   const [tick, setTick] = useState(0);
-  const [actionLabels, setActionLabels] = useState<Record<string, string>>({});
-  const [targetLabels, setTargetLabels] = useState<Record<string, string>>({});
+  const [filters, setFilters] = useState<AuditLogFilters>({ actions: [], targets: [] });
 
-  const absorbLabels = (rows: AuditLogItem[]) => {
-    if (rows.length === 0) return;
-    setActionLabels((prev) => ({ ...prev, ...Object.fromEntries(rows.map((r) => [r.action, r.action_label])) }));
-    setTargetLabels((prev) => ({ ...prev, ...Object.fromEntries(rows.map((r) => [r.target_type, r.target_label])) }));
-  };
+  useEffect(() => {
+    getAuditLogFilters().then(setFilters).catch(() => {});
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -173,7 +146,6 @@ export function AuditLogPage() {
         if (cancelled) return;
         setItems(page.items);
         setTotal(page.total);
-        absorbLabels(page.items);
       })
       .catch((e) => {
         if (!cancelled) setError(e);
@@ -202,7 +174,6 @@ export function AuditLogPage() {
         return [...prev, ...page.items.filter((x) => !seen.has(x.id))];
       });
       setTotal(page.total);
-      absorbLabels(page.items);
     } catch (e) {
       setActionError(errMessage(e));
     } finally {
@@ -222,8 +193,9 @@ export function AuditLogPage() {
     }
   };
 
-  const seenActions = items.map((x) => x.action);
-  const seenTargets = items.map((x) => x.target_type);
+  const actionOptions = buildOptions(filters.actions, items.map((x) => ({ value: x.action, label: x.action_label })));
+  const targetOptions = buildOptions(filters.targets, items.map((x) => ({ value: x.target_type, label: x.target_label })));
+  const labelOf = (opts: LabelOption[], value: string) => opts.find((o) => o.value === value)?.label ?? value;
   const hasMore = items.length < total;
 
   return (
@@ -236,18 +208,18 @@ export function AuditLogPage() {
               <Caption1 style={{ color: t.colorNeutralForeground3 }}>动作</Caption1>
               <Dropdown
                 placeholder="全部动作"
-                value={action ? (actionLabels[action] ?? action) : ''}
+                value={action ? labelOf(actionOptions, action) : ''}
                 selectedOptions={action ? [action] : []}
                 onOptionSelect={(_, d) => setAction(String(d.optionValue ?? ''))}
                 disabled={loading}
-                style={{ width: '150px', minWidth: '150px' }}
+                style={{ width: '190px', minWidth: '190px' }}
               >
                 <Option value="" text="全部动作">
                   全部动作
                 </Option>
-                {optionValues(KNOWN_ACTIONS, seenActions).map((key) => (
-                  <Option key={key} value={key} text={actionLabels[key] ?? key}>
-                    {actionLabels[key] ?? key}
+                {actionOptions.map((o) => (
+                  <Option key={o.value} value={o.value} text={o.label}>
+                    {o.label}
                   </Option>
                 ))}
               </Dropdown>
@@ -256,18 +228,18 @@ export function AuditLogPage() {
               <Caption1 style={{ color: t.colorNeutralForeground3 }}>对象类型</Caption1>
               <Dropdown
                 placeholder="全部类型"
-                value={targetType ? (targetLabels[targetType] ?? targetType) : ''}
+                value={targetType ? labelOf(targetOptions, targetType) : ''}
                 selectedOptions={targetType ? [targetType] : []}
                 onOptionSelect={(_, d) => setTargetType(String(d.optionValue ?? ''))}
                 disabled={loading}
-                style={{ width: '120px', minWidth: '120px' }}
+                style={{ width: '130px', minWidth: '130px' }}
               >
                 <Option value="" text="全部类型">
                   全部类型
                 </Option>
-                {optionValues(KNOWN_TARGETS, seenTargets).map((key) => (
-                  <Option key={key} value={key} text={targetLabels[key] ?? key}>
-                    {targetLabels[key] ?? key}
+                {targetOptions.map((o) => (
+                  <Option key={o.value} value={o.value} text={o.label}>
+                    {o.label}
                   </Option>
                 ))}
               </Dropdown>
