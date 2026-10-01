@@ -59,6 +59,8 @@ AUDIT_ACTION_LABELS: dict[str, str] = {
     "problem_batch_group": "题目批量分组",
     "problem_batch_delete": "题目批量删除",
     "assignment_remind": "提醒学生交作业",
+    "assignment_retry": "打回重做",
+    "assignment_retry_cancel": "撤销打回重做",
 }
 
 AUDIT_TARGET_LABELS: dict[str, str] = {

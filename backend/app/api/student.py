@@ -14,6 +14,7 @@ from ..models import (Assignment, AssignmentProblem, GroupMember, Problem,
                       StudentReminder, Submission, SubmissionResult, TeacherGroup,
                       TeacherStudent, TestCase, User)
 from ..services import groups as groups_svc
+from ..services import retries as retries_svc
 from ..services import scoring, stats, visibility
 
 router = APIRouter()
@@ -78,8 +79,11 @@ def _utcnow() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
 
-def _assignment_state(assignment: Assignment, now_s: str) -> str:
-    if now_s > assignment.end_time:
+def _assignment_state(assignment: Assignment, now_s: str, deadline: str | None = None) -> str:
+    """'retry' = 原窗口已结束、但该生被打了回且还在重做期限内（0.4.1 F9）。"""
+    if retries_svc.in_retry(assignment, deadline, now_s):
+        return "retry"
+    if now_s > retries_svc.effective_end(assignment, deadline):
         return "ended"
     cutoff = (datetime.strptime(now_s, "%Y-%m-%d %H:%M:%S")
               + timedelta(hours=config.ENDING_SOON_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
@@ -150,7 +154,8 @@ def _my_scores(db: Session, student: User, assignment: Assignment) -> list[dict]
     return scores
 
 
-def _student_assignment_out(db: Session, student: User, assignment: Assignment) -> dict:
+def _student_assignment_out(db: Session, student: User, assignment: Assignment,
+                            deadline: str | None = None) -> dict:
     now_s = _utcnow()
     return {
         "id": assignment.id,
@@ -161,8 +166,10 @@ def _student_assignment_out(db: Session, student: User, assignment: Assignment) 
         "max_submissions": assignment.max_submissions,
         "score_policy": assignment.score_policy,
         "released": assignment.released,
-        "state": _assignment_state(assignment, now_s),
+        "state": _assignment_state(assignment, now_s, deadline),
         "my_scores": _my_scores(db, student, assignment),
+        "pass_score": assignment.pass_score,
+        "retry_deadline": deadline,
     }
 
 
@@ -178,14 +185,19 @@ def list_assignments(db: Session = Depends(get_db), student: User = Depends(requ
         .order_by(Assignment.start_time.desc(), Assignment.id.desc())
     ).scalars().all()
     # 逐场次解析受众：'subgroup' 场次只对白名单里的学生可见（班级量级，无需物化）
-    return [_student_assignment_out(db, student, a) for a in rows if _in_audience(db, student, a)]
+    deadlines = retries_svc.retry_deadlines(db, student.id)  # 一次取回，别逐场次查
+    return [
+        _student_assignment_out(db, student, a, deadlines.get(a.id))
+        for a in rows if _in_audience(db, student, a)
+    ]
 
 
 @router.get("/assignments/{assignment_id}", response_model=schemas.StudentAssignmentOut)
 def get_assignment(assignment_id: int,
                    db: Session = Depends(get_db), student: User = Depends(require_student)):
     assignment = _get_audience_assignment(db, student, assignment_id)
-    return _student_assignment_out(db, student, assignment)
+    return _student_assignment_out(db, student, assignment,
+                                   retries_svc.retry_deadline(db, assignment.id, student.id))
 
 
 @router.get("/assignments/{assignment_id}/problems/{problem_id}", response_model=StudentProblemViewOut)
@@ -239,10 +251,12 @@ def create_submission(assignment_id: int, problem_id: int, body: schemas.Submiss
         raise APIError(404, "PROBLEM_NOT_FOUND", "题目不在该场次中")
 
     now_s = _utcnow()
-    if not (assignment.start_time <= now_s <= assignment.end_time):
+    # 0.4.1 F9：被打了回的学生在重做期限内仍可交，且这段时间不限次数
+    deadline = retries_svc.retry_deadline(db, assignment.id, student.id)
+    if not retries_svc.is_open(assignment, deadline, now_s):
         raise APIError(409, "WINDOW_CLOSED", "不在提交时间窗口内")
 
-    if assignment.max_submissions is not None:
+    if assignment.max_submissions is not None and not retries_svc.in_retry(assignment, deadline, now_s):
         count = db.scalar(
             select(func.count()).select_from(Submission).where(
                 Submission.assignment_id == assignment.id,

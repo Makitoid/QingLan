@@ -148,6 +148,20 @@ class StudentReminderOut(BaseModel):
     created_at: str
 
 
+# ---------- 打回重做（0.4.1 F9）----------
+
+class RetryRequest(BaseModel):
+    """student_ids 为空 = 由服务端按及格线自动挑不及格学生。"""
+    student_ids: list[int] = []
+    deadline: str
+
+
+class RetryResultOut(BaseModel):
+    created: int
+    updated: int
+    student_ids: list[int]
+
+
 class GroupOut(ORMModel):
     id: int
     name: str
@@ -416,6 +430,8 @@ class AssignmentCreate(BaseModel):
     # 0.3.2 F1 发布受众：'all' = 全部名单（缺省，与老行为一致）；'subgroup' 须给出 subgroup_ids
     audience_mode: Literal["all", "subgroup"] = "all"
     subgroup_ids: list[int] = []
+    # 0.4.1 F9：及格线，必须落在 [0, 题单满分]，由接口在写库前校验
+    pass_score: float | None = Field(default=None, ge=0)
     problems: list[AssignmentProblemIn] = Field(min_length=1)
 
 
@@ -427,6 +443,8 @@ class AssignmentUpdate(BaseModel):
     score_policy: str | None = None
     audience_mode: Literal["all", "subgroup"] | None = None
     subgroup_ids: list[int] | None = None
+    # 显式传 null 才清空及格线；不传 = 不改（与其余字段同一套 model_fields_set 语义）
+    pass_score: float | None = Field(default=None, ge=0)
     problems: list[AssignmentProblemIn] | None = None
 
 
@@ -450,6 +468,8 @@ class AssignmentOut(ORMModel):
     # 0.3.2 F1：受众模式与子分组白名单（'all' 时恒为空数组，老数据行为不变）
     audience_mode: str = "all"
     subgroup_ids: list[int] = []
+    # 0.4.1 F9：及格线（绝对分）；None = 本场不判及格
+    pass_score: float | None = None
     created_by: int
     created_at: str
     problems: list[AssignmentProblemOut] = []
@@ -575,8 +595,12 @@ class StudentAssignmentOut(BaseModel):
     max_submissions: int | None
     score_policy: str
     released: int
-    state: Literal["ongoing", "ending", "ended"]
+    # 'retry' = 原窗口已过但该生被打了回、仍在重做期限内（0.4.1 F9）
+    state: Literal["ongoing", "ending", "ended", "retry"]
     my_scores: list[MyProblemScore] = []
+    # 0.4.1 F9：及格线与该生的重做期限（UTC 串），无则 null
+    pass_score: float | None = None
+    retry_deadline: str | None = None
 
 
 class SampleCaseOut(BaseModel):

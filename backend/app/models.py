@@ -145,6 +145,25 @@ class Assignment(Base):
     released_at = Column(Text)
     # 发布受众（0.3.2 F1）：'all' 沿用老行为（全部名单），'subgroup' 只看 assignment_subgroups
     audience_mode = Column(Text, nullable=False, server_default=text("'all'"))
+    # 及格线（0.4.1 F9）：绝对分，NULL = 不设。总分严格小于它即判不及格。
+    pass_score = Column(Float)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
+    created_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))
+
+
+class AssignmentRetry(Base):
+    """教师「打回重做」（0.4.1 F9）：把该生在这场次里的提交窗口延长到 deadline。
+
+    复合主键 = 天然幂等：重复打回只更新期限，不会出现两条互相打架的记录。
+    窗口之外与原场次一致；处于重做期内时不限提交次数（见 services/retries.py）。
+    """
+
+    __tablename__ = "assignment_retries"
+    __table_args__ = (Index("idx_assignment_retries_student_deadline", "student_id", "deadline"),)
+
+    assignment_id = Column(Integer, ForeignKey("assignments.id", ondelete="CASCADE"), primary_key=True)
+    student_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True)
+    deadline = Column(Text, nullable=False)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=False)
     created_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))
 
