@@ -377,6 +377,8 @@ export interface AssignmentSummary {
   released: boolean;
   released_at: string | null;
   created_at: string;
+  /** 0.4.1 F9：及格线（绝对分），null = 本场不判及格。 */
+  pass_score: number | null;
 }
 
 export interface AssignmentDetail extends AssignmentSummary {
@@ -394,6 +396,8 @@ export interface AssignmentBody {
   audience_mode: AudienceMode;
   /** 受众子分组白名单；`audience_mode='all'` 时上送空数组。 */
   subgroup_ids: number[];
+  /** 0.4.1 F9：及格线，必须 ≤ 本场满分；null = 不设。 */
+  pass_score: number | null;
   problems: AssignmentProblemRef[];
 }
 
@@ -472,6 +476,8 @@ export interface AssignmentStudentRow {
   problem_scores: AssignmentProblemScore[];
   last_submitted_at: string | null;
   last_submission_id?: number | null;
+  /** 0.4.1 F9：该生在本场次的重做期限，未被打回为 null。 */
+  retry_deadline?: string | null;
 }
 
 /* ---------- submissions ---------- */
@@ -505,7 +511,7 @@ export interface TeacherSubmissionDetail {
 
 /* ---------- student ---------- */
 
-export type AssignmentState = 'ongoing' | 'ending' | 'ended';
+export type AssignmentState = 'ongoing' | 'ending' | 'ended' | 'retry';
 
 export interface StudentAssignmentItem {
   id: number;
@@ -518,6 +524,9 @@ export interface StudentAssignmentItem {
   released: boolean;
   state: AssignmentState;
   my_scores: StudentScoreRow[];
+  /** 0.4.1 F9：及格线与自己是否被打回重做（state='retry' 时 deadline 非空）。 */
+  pass_score: number | null;
+  retry_deadline: string | null;
 }
 
 export interface StudentScoreRow {
@@ -542,6 +551,9 @@ export interface StudentAssignmentDetail {
   released: boolean;
   state: AssignmentState;
   my_scores: StudentScoreRow[];
+  /** 0.4.1 F9：及格线与自己是否被打回重做（state='retry' 时 deadline 非空）。 */
+  pass_score: number | null;
+  retry_deadline: string | null;
 }
 
 export interface SampleCase {
@@ -615,6 +627,12 @@ export interface StudentReminderItem {
   end_time: string;
   teacher_name: string;
   created_at: string;
+}
+
+export interface RetryResult {
+  created: number;
+  updated: number;
+  student_ids: number[];
 }
 
 export interface RemindResult {

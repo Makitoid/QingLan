@@ -5,7 +5,7 @@ import {
   Badge,
   Button,
   Caption1,
-  createTableColumn, DataGrid,
+  createTableColumn, CardHeader, DataGrid,
   DataGridBody,
   DataGridCell,
   DataGridHeader,
@@ -15,6 +15,7 @@ import {
   MessageBarActions,
   MessageBarBody,
   Spinner,
+  Text,
   tokens,
 
   type TableColumnDefinition,
@@ -103,6 +104,8 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
     () => getAssignmentStudents(assignmentId),
     [assignmentId],
   );
+  // 0.4.1：卡片头部由本组件自己出——导出与提醒两个按钮同处一行，才排得下也排得齐。
+  const { exportButton, exportError, exporting, handleExport } = useAssignmentStudentsExport(assignmentId);
 
   // F6：提醒只对未交的学生发；换场次（组件重挂载）自然回到未发状态。
   const [reminding, setReminding] = useState(false);
@@ -164,34 +167,46 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
   // 已交的学生不需要再被提醒，所以未交名单既是批量按钮的收件人，也是它的可用性开关。
   const unsubmitted = (data ?? []).filter((r) => r.submitted_count === 0);
 
-  if (loading) return <LoadingView />;
-  if (error) return <ErrorView error={error} onRetry={reload} />;
-
-  if (!data || data.length === 0) {
-    return <EmptyView title="暂无学生" description="该场次受众为空，请检查教师↔学生绑定关系。" />;
-  }
-
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: tokens.spacingHorizontalS, marginTop: tokens.spacingVerticalS }}>
-        {unsubmitted.length === 0 ? (
-          <Caption1 style={{ color: t.colorNeutralForeground3 }}>全部学生都已提交，无需提醒。</Caption1>
-        ) : (
-          <>
-            <Caption1 style={{ color: t.colorNeutralForeground3 }}>{`${unsubmitted.length} 名学生未交。`}</Caption1>
-            <Button
-              appearance="primary"
-              size="small"
-              icon={reminding ? <Spinner size="tiny" /> : <Alert24Regular />}
-              disabled={reminding}
-              onClick={() => void remind(unsubmitted.map((r) => r.student_id), `未交作业的 ${unsubmitted.length} 名学生`)}
-            >
-              提醒未交学生
-            </Button>
-          </>
-        )}
-      </div>
+      <CardHeader
+        header={<Text weight="semibold">学生答题情况</Text>}
+        action={
+          <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS }}>
+            {exportButton}
+            {unsubmitted.length > 0 && (
+              <Button
+                appearance="primary"
+                icon={reminding ? <Spinner size="tiny" /> : <Alert24Regular />}
+                disabled={reminding}
+                onClick={() => void remind(unsubmitted.map((r) => r.student_id), `未交作业的 ${unsubmitted.length} 名学生`)}
+              >
+                {reminding ? '提醒中…' : `提醒未交学生（${unsubmitted.length}）`}
+              </Button>
+            )}
+          </div>
+        }
+      />
 
+      {exportError && (
+        <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
+          <MessageBarBody>{exportError}</MessageBarBody>
+          <MessageBarActions>
+            <Button size="small" disabled={exporting} onClick={handleExport}>
+              重试
+            </Button>
+          </MessageBarActions>
+        </MessageBar>
+      )}
+
+      {loading ? (
+        <LoadingView />
+      ) : error ? (
+        <ErrorView error={error} onRetry={reload} />
+      ) : !data || data.length === 0 ? (
+        <EmptyView title="暂无学生" description="该场次受众为空，请检查教师↔学生绑定关系。" />
+      ) : (
+        <>
       {notice && (
         <MessageBar intent={notice.intent} style={{ margin: `${tokens.spacingVerticalS} 0`, borderRadius: tokens.borderRadiusMedium }}>
           <MessageBarBody>{notice.text}</MessageBarBody>
@@ -284,6 +299,8 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
         </DataGrid>
         </div>
       </div>
+        </>
+      )}
     </>
   );
 }

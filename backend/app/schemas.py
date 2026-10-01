@@ -576,6 +576,8 @@ class StudentRowOut(BaseModel):
     problem_scores: list[StudentProblemScoreOut] = []
     last_submitted_at: str | None = None
     last_submission_id: int | None = None
+    # 0.4.1 F9：该生在本场次的重做期限，没被打回为 null
+    retry_deadline: str | None = None
 
 
 class MyProblemScore(BaseModel):

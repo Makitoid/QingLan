@@ -26,6 +26,15 @@ def retry_deadlines(db: Session, student_id: int) -> dict[int, str]:
     return {assignment_id: deadline for assignment_id, deadline in rows}
 
 
+def retry_deadlines_by_assignment(db: Session, assignment_id: int) -> dict[int, str]:
+    """本场次全部的重做期限：{student_id: deadline}（教师端成绩表一次取回）。"""
+    rows = db.execute(
+        select(AssignmentRetry.student_id, AssignmentRetry.deadline)
+        .where(AssignmentRetry.assignment_id == assignment_id)
+    ).all()
+    return {student_id: deadline for student_id, deadline in rows}
+
+
 def retry_deadline(db: Session, assignment_id: int, student_id: int) -> str | None:
     row = db.get(AssignmentRetry, (assignment_id, student_id))
     return row.deadline if row is not None else None

@@ -18,6 +18,7 @@ import type {
   AuditLogPage,
   StudentReminderItem,
   RemindResult,
+  RetryResult,
   AuditLogFilters,
   CreateTeacherBody,
   CreateStudentBody,
@@ -546,6 +547,21 @@ export function remindAssignmentStudents(assignmentId: number, studentIds: numbe
     method: 'POST',
     body: { student_ids: studentIds },
   });
+}
+
+/**
+ * 打回重做（0.4.1 F9）：把学生的提交窗口延长到 `deadline`（UTC 串），期内不限次数。
+ * `studentIds` 留空 = 由服务端按及格线自动挑不及格的学生。
+ */
+export function retryAssignmentStudents(assignmentId: number, deadline: string, studentIds: number[] = []): Promise<RetryResult> {
+  return request<RetryResult>(`/teacher/assignments/${assignmentId}/retry`, {
+    method: 'POST',
+    body: { student_ids: studentIds, deadline },
+  });
+}
+
+export function cancelAssignmentRetry(assignmentId: number, studentId: number): Promise<void> {
+  return request<void>(`/teacher/assignments/${assignmentId}/retry/${studentId}`, { method: 'DELETE' });
 }
 
 /* ---------- teacher: submissions ---------- */

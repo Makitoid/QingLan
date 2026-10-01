@@ -28,7 +28,7 @@ import { LoadingView, ErrorView, EmptyView, errMessage } from '../../components/
 import { fmtTime } from '../../components/time';
 import { fmtScore } from '../../components/score';
 import { ScoreHistogram } from '../../components/ScoreHistogram';
-import { AssignmentStudentsTable, useAssignmentStudentsExport } from '../../components/AssignmentStudentsTable';
+import { AssignmentStudentsTable } from '../../components/AssignmentStudentsTable';
 import { PageHeader } from '../../components/PageHeader';
 
 const columns: TableColumnDefinition<OverviewPerProblem>[] = [
@@ -58,7 +58,6 @@ export function TeacherAssignmentOverview() {
   const assignmentId = Number(id);
   const detail = useAsync<AssignmentDetail>(() => getTeacherAssignment(assignmentId), [assignmentId]);
   const overview = useAsync<AssignmentOverview>(() => getAssignmentOverview(assignmentId), [assignmentId]);
-  const studentsExport = useAssignmentStudentsExport(assignmentId);
 
   const handleRelease = async () => {
     if (!window.confirm('确定放出考试结果？放出后学生即可见判定与分数。')) return;
@@ -179,20 +178,6 @@ export function TeacherAssignmentOverview() {
       </Card>
 
       <Card size="medium">
-        <CardHeader
-          header={<Text weight="semibold">学生答题情况</Text>}
-          action={studentsExport.exportButton}
-        />
-        {studentsExport.exportError && (
-          <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
-            <MessageBarBody>{studentsExport.exportError}</MessageBarBody>
-            <MessageBarActions>
-              <Button size="small" disabled={studentsExport.exporting} onClick={studentsExport.handleExport}>
-                重试
-              </Button>
-            </MessageBarActions>
-          </MessageBar>
-        )}
         <AssignmentStudentsTable assignmentId={assignmentId} />
       </Card>
     </div>

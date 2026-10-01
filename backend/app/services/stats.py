@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from ..models import (Assignment, AssignmentProblem, GroupMember, Problem,
                       Submission, TeacherGroup, TeacherStudent, User)
 from . import groups as groups_svc
+from . import retries as retries_svc
 from . import scoring
 
 HISTOGRAM_RANGES = [
@@ -225,6 +226,8 @@ def student_rows(db: Session, assignment: Assignment) -> list[dict]:
 
     ordered_problems = assignment_problems_ordered(db, assignment.id)
     problems = _problems_by_id(db, ordered_problems)
+    # 0.4.1 F9：谁被打回重做了，教师端成绩表要能标出来（一次取回，别逐生查）
+    retries_by_student = retries_svc.retry_deadlines_by_assignment(db, assignment.id)
 
     rows = []
     for student in students:
@@ -258,5 +261,6 @@ def student_rows(db: Session, assignment: Assignment) -> list[dict]:
             "problem_scores": problem_scores,
             "last_submitted_at": last.submitted_at if last else None,
             "last_submission_id": last.id if last else None,
+            "retry_deadline": retries_by_student.get(student.id),
         })
     return rows
