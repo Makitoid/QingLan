@@ -89,9 +89,6 @@ export function StudentReminderDialog() {
               <Caption1 style={{ color: t.colorNeutralForeground3 }}>
                 {`${current.teacher_name} 提醒你尽快提交。截止时间 ${fmtTime(current.end_time)}。`}
               </Caption1>
-              <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-                确认后这条提醒不再弹出；点「稍后再说」则下次登录仍会提醒你。
-              </Caption1>
               {error && (
                 <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
                   <MessageBarBody>{error}</MessageBarBody>
