@@ -18,14 +18,12 @@ import {
   tokens,
 
   type TableColumnDefinition,
-  type TableRowId,
 } from '@fluentui/react-components';
 import { Alert24Regular, ArrowDownload24Regular, Dismiss24Regular } from '@fluentui/react-icons';
 import { exportAssignmentStudents, getAssignmentStudents, remindAssignmentStudents } from '../api';
 import type { AssignmentProblemScore, AssignmentStudentRow } from '../api/types';
 import { useAsync } from './useAsync';
 import { LoadingView, ErrorView, EmptyView, errMessage } from './StateViews';
-import { BulkActionBar } from './BulkActionBar';
 import { fmtTime } from './time';
 import { fmtScore } from './score';
 
@@ -106,8 +104,7 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
     [assignmentId],
   );
 
-  // F6：勾选 = 批量提醒的收件人；换场次（组件重挂载）自然清空。
-  const [selectedIds, setSelectedIds] = useState<Set<TableRowId>>(new Set());
+  // F6：提醒只对未交的学生发；换场次（组件重挂载）自然回到未发状态。
   const [reminding, setReminding] = useState(false);
   const [notice, setNotice] = useState<{ intent: 'success' | 'warning' | 'error'; text: string } | null>(null);
 
@@ -157,7 +154,6 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
           ? `已提醒 ${result.created} 名学生${result.skipped ? `，另有 ${result.skipped} 名的提醒仍未读、不重复发送` : ''}。`
           : '这些学生都还有一条未读的提醒，本次没有重复发送。',
       });
-      setSelectedIds(new Set());
     } catch (err) {
       setNotice({ intent: 'error', text: `提醒失败：${errMessage(err)}` });
     } finally {
@@ -165,7 +161,8 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
     }
   };
 
-  const selectedStudentIds = (data ?? []).filter((r) => selectedIds.has(r.student_id)).map((r) => r.student_id);
+  // 已交的学生不需要再被提醒，所以未交名单既是批量按钮的收件人，也是它的可用性开关。
+  const unsubmitted = (data ?? []).filter((r) => r.submitted_count === 0);
 
   if (loading) return <LoadingView />;
   if (error) return <ErrorView error={error} onRetry={reload} />;
@@ -176,26 +173,24 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
 
   return (
     <>
-      <BulkActionBar
-        selectedCount={selectedStudentIds.length}
-        actions={[
-          {
-            key: 'remind',
-            label: '提醒交作业',
-            icon: <Alert24Regular />,
-            appearance: 'primary',
-            disabled: reminding,
-            onClick: () => void remind(selectedStudentIds, '选中的学生'),
-          },
-          {
-            key: 'cancel',
-            label: '取消选择',
-            icon: <Dismiss24Regular />,
-            disabled: reminding,
-            onClick: () => setSelectedIds(new Set()),
-          },
-        ]}
-      />
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: tokens.spacingHorizontalS, marginTop: tokens.spacingVerticalS }}>
+        {unsubmitted.length === 0 ? (
+          <Caption1 style={{ color: t.colorNeutralForeground3 }}>全部学生都已提交，无需提醒。</Caption1>
+        ) : (
+          <>
+            <Caption1 style={{ color: t.colorNeutralForeground3 }}>{`${unsubmitted.length} 名学生未交。`}</Caption1>
+            <Button
+              appearance="primary"
+              size="small"
+              icon={reminding ? <Spinner size="tiny" /> : <Alert24Regular />}
+              disabled={reminding}
+              onClick={() => void remind(unsubmitted.map((r) => r.student_id), `未交作业的 ${unsubmitted.length} 名学生`)}
+            >
+              提醒未交学生
+            </Button>
+          </>
+        )}
+      </div>
 
       {notice && (
         <MessageBar intent={notice.intent} style={{ margin: `${tokens.spacingVerticalS} 0`, borderRadius: tokens.borderRadiusMedium }}>
@@ -209,16 +204,15 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
       )}
 
       <div style={{ overflowX: 'auto' }}>
+        {/* 最小宽度撑在内层 div 上：行分隔线是 DataGrid 自身的绝对定位伪元素，
+            只按它自己的可视宽度画；minWidth 直接给 DataGrid 会导致右半段没有分隔线。 */}
+        <div style={{ minWidth: gridMinWidth }}>
         <DataGrid
           items={data}
           columns={columns}
           focusMode="cell"
           resizableColumns
-          selectionMode="multiselect"
           getRowId={(item) => item.student_id}
-          selectedItems={selectedIds}
-          onSelectionChange={(_, d) => setSelectedIds(new Set(d.selectedItems))}
-          style={{ minWidth: gridMinWidth }}
         >
         <DataGridHeader>
           <DataGridRow>
@@ -268,15 +262,19 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
                     )
                   )}
                   {columnId === 'remind' && (
-                    <Button
-                      appearance="subtle"
-                      size="small"
-                      icon={<Alert24Regular />}
-                      disabled={reminding}
-                      onClick={() => void remind([item.student_id], item.name || item.username || '该生')}
-                    >
-                      提醒
-                    </Button>
+                    item.submitted_count === 0 ? (
+                      <Button
+                        appearance="subtle"
+                        size="small"
+                        icon={<Alert24Regular />}
+                        disabled={reminding}
+                        onClick={() => void remind([item.student_id], item.name || item.username || '该生')}
+                      >
+                        提醒
+                      </Button>
+                    ) : (
+                      <Caption1 style={{ color: t.colorNeutralForeground4 }}>—</Caption1>
+                    )
                   )}
                 </DataGridCell>
               )}
@@ -284,6 +282,7 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
           )}
         </DataGridBody>
         </DataGrid>
+        </div>
       </div>
     </>
   );
