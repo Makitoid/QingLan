@@ -1,33 +1,34 @@
 import { useState } from 'react';
 import { useTheme } from '../appTheme';
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from 'recharts';
+import { Bar, BarChart, CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip as ChartTooltip, XAxis, YAxis } from 'recharts';
 import { Button, Tooltip, tokens } from '@fluentui/react-components';
-import { DataBarHorizontal24Regular, DataBarVertical24Regular } from '@fluentui/react-icons';
+import { DataBarVertical24Regular, DataLine24Regular } from '@fluentui/react-icons';
 import type { HistogramBucket } from '../api/types';
 
-/** 柱形（竖）/ 条形（横）两种形状，分数段文案长时用条形更好读（0.4.1 F7）。 */
-type Shape = 'column' | 'bar';
-
-/** 条形模式下每档占的行高；档数多时按它把容器撑高，避免标签挤成一团。 */
-const BAR_ROW_HEIGHT = 36;
+/** 柱形 / 折线两种画法（0.4.1 F7）：柱形看各档人数，折线看分布走势。 */
+type Shape = 'column' | 'line';
 
 const SHAPES: { value: Shape; label: string; icon: JSX.Element }[] = [
   { value: 'column', label: '柱形图', icon: <DataBarVertical24Regular /> },
-  { value: 'bar', label: '条形图', icon: <DataBarHorizontal24Regular /> },
+  { value: 'line', label: '折线图', icon: <DataLine24Regular /> },
 ];
 
 export function ScoreHistogram({ data, height = 280 }: { data: HistogramBucket[]; height?: number }) {
   const t = useTheme();
   const [shape, setShape] = useState<Shape>('column');
-  const chartHeight = shape === 'bar' ? Math.max(height, data.length * BAR_ROW_HEIGHT + 24) : height;
 
   const axisTick = { fill: t.colorNeutralForeground3, fontSize: 12 };
-  const tooltipContentStyle = {
-    backgroundColor: t.colorNeutralBackground1,
-    border: `1px solid ${t.colorNeutralStroke1}`,
-    borderRadius: tokens.borderRadiusMedium,
-    color: t.colorNeutralForeground1,
-  };
+  const chartTooltip = (
+    <ChartTooltip
+      contentStyle={{
+        backgroundColor: t.colorNeutralBackground1,
+        border: `1px solid ${t.colorNeutralStroke1}`,
+        borderRadius: tokens.borderRadiusMedium,
+        color: t.colorNeutralForeground1,
+      }}
+      labelStyle={{ color: t.colorNeutralForeground1 }}
+    />
+  );
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
@@ -57,31 +58,31 @@ export function ScoreHistogram({ data, height = 280 }: { data: HistogramBucket[]
         ))}
       </div>
 
-      <ResponsiveContainer width="100%" height={chartHeight}>
+      <ResponsiveContainer width="100%" height={height}>
         {shape === 'column' ? (
           <BarChart data={data}>
             <CartesianGrid strokeDasharray="3 3" stroke={t.colorNeutralStroke2} vertical={false} />
             <XAxis dataKey="range" tick={axisTick} stroke={t.colorNeutralStroke1} />
             <YAxis allowDecimals={false} tick={axisTick} stroke={t.colorNeutralStroke1} />
-            <ChartTooltip
-              cursor={{ fill: t.colorNeutralBackground3 }}
-              contentStyle={tooltipContentStyle}
-              labelStyle={{ color: t.colorNeutralForeground1 }}
-            />
-            <Bar dataKey="count" name="人数" fill={t.colorBrandBackground} radius={[4, 4, 0, 0]} />
+            {chartTooltip}
+            <Bar dataKey="count" name="人数" fill={t.colorBrandBackground} />
           </BarChart>
         ) : (
-          <BarChart data={data} layout="vertical" margin={{ left: 16, right: 24 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke={t.colorNeutralStroke2} horizontal={false} />
-            <XAxis type="number" allowDecimals={false} tick={axisTick} stroke={t.colorNeutralStroke1} />
-            <YAxis type="category" dataKey="range" width={80} tick={axisTick} stroke={t.colorNeutralStroke1} />
-            <ChartTooltip
-              cursor={{ fill: t.colorNeutralBackground3 }}
-              contentStyle={tooltipContentStyle}
-              labelStyle={{ color: t.colorNeutralForeground1 }}
+          <LineChart data={data}>
+            <CartesianGrid strokeDasharray="3 3" stroke={t.colorNeutralStroke2} vertical={false} />
+            <XAxis dataKey="range" tick={axisTick} stroke={t.colorNeutralStroke1} />
+            <YAxis allowDecimals={false} tick={axisTick} stroke={t.colorNeutralStroke1} />
+            {chartTooltip}
+            <Line
+              type="monotone"
+              dataKey="count"
+              name="人数"
+              stroke={t.colorBrandBackground}
+              strokeWidth={2}
+              dot={{ r: 3, fill: t.colorBrandBackground }}
+              activeDot={{ r: 5 }}
             />
-            <Bar dataKey="count" name="人数" fill={t.colorBrandBackground} radius={[0, 4, 4, 0]} />
-          </BarChart>
+          </LineChart>
         )}
       </ResponsiveContainer>
     </div>
