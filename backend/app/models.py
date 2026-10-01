@@ -243,6 +243,24 @@ class TeacherNotice(Base):
     dismissed_at = Column(Text)
 
 
+class StudentReminder(Base):
+    """教师「提醒交作业」（0.4.1 F6）：学生登录后弹窗，看过一次即不再提示。
+
+    与 teacher_notices 同构（一次性 + dismissed/read 时间戳），但受众是学生。
+    同一 (assignment, student) 只保留一条未读：重复提醒不会叠成好几个弹窗。
+    """
+
+    __tablename__ = "student_reminders"
+    __table_args__ = (Index("idx_student_reminders_student_read", "student_id", "read_at"),)
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    assignment_id = Column(Integer, ForeignKey("assignments.id", ondelete="CASCADE"), nullable=False)
+    teacher_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    student_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False)
+    created_at = Column(Text, nullable=False, server_default=text("(datetime('now'))"))
+    read_at = Column(Text)
+
+
 class SiteSetting(Base):
     __tablename__ = "site_settings"
     __table_args__ = (

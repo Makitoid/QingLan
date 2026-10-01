@@ -11,17 +11,22 @@ import {
   DataGridHeader,
   DataGridHeaderCell,
   DataGridRow,
+  MessageBar,
+  MessageBarActions,
+  MessageBarBody,
   Spinner,
   Text,
   tokens,
 
   type TableColumnDefinition,
+  type TableRowId,
 } from '@fluentui/react-components';
-import { ArrowDownload24Regular } from '@fluentui/react-icons';
-import { exportAssignmentStudents, getAssignmentStudents } from '../api';
+import { Alert24Regular, ArrowDownload24Regular, Dismiss24Regular } from '@fluentui/react-icons';
+import { exportAssignmentStudents, getAssignmentStudents, remindAssignmentStudents } from '../api';
 import type { AssignmentProblemScore, AssignmentStudentRow } from '../api/types';
 import { useAsync } from './useAsync';
 import { LoadingView, ErrorView, EmptyView, errMessage } from './StateViews';
+import { BulkActionBar } from './BulkActionBar';
 import { fmtTime } from './time';
 import { fmtScore } from './score';
 
@@ -102,6 +107,11 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
     [assignmentId],
   );
 
+  // F6：勾选 = 批量提醒的收件人；换场次（组件重挂载）自然清空。
+  const [selectedIds, setSelectedIds] = useState<Set<TableRowId>>(new Set());
+  const [reminding, setReminding] = useState(false);
+  const [notice, setNotice] = useState<{ intent: 'success' | 'warning' | 'error'; text: string } | null>(null);
+
   // 列顺序与导出的 xlsx 对齐：学号 | 姓名 | 提交次数 | 最高单题分 | 总分 | 每题得分 | 最后提交时间。
   // 「总分」紧跟「最高单题分」，教师对照导出时两列相邻；每题列插在它之后、时间列之前。
   const problemColumns = useMemo(() => problemColumnsFor(data), [data]);
@@ -124,67 +134,147 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
     cols.push(
       createTableColumn({ columnId: 'last_submitted_at', renderHeaderCell: () => '最后提交时间' }),
       createTableColumn({ columnId: 'drill', renderHeaderCell: () => '查看详情' }),
+      createTableColumn({ columnId: 'remind', renderHeaderCell: () => '提醒' }),
     );
     return cols;
   }, [problemColumns]);
 
+  const remind = async (ids: number[], label: string) => {
+    if (ids.length === 0 || reminding) return;
+    if (!window.confirm(`确定提醒 ${label} 交作业？学生下次登录时会看到弹窗。`)) return;
+    setReminding(true);
+    setNotice(null);
+    try {
+      const result = await remindAssignmentStudents(assignmentId, ids);
+      setNotice({
+        intent: result.created > 0 ? 'success' : 'warning',
+        text: result.created > 0
+          ? `已提醒 ${result.created} 名学生${result.skipped ? `，另有 ${result.skipped} 名的提醒仍未读、不重复发送` : ''}。`
+          : '这些学生都还有一条未读的提醒，本次没有重复发送。',
+      });
+      setSelectedIds(new Set());
+    } catch (err) {
+      setNotice({ intent: 'error', text: `提醒失败：${errMessage(err)}` });
+    } finally {
+      setReminding(false);
+    }
+  };
+
+  const selectedStudentIds = (data ?? []).filter((r) => selectedIds.has(r.student_id)).map((r) => r.student_id);
+
   if (loading) return <LoadingView />;
   if (error) return <ErrorView error={error} onRetry={reload} />;
 
-  return data && data.length === 0 ? (
-    <EmptyView title="暂无学生" description="该场次受众为空，请检查教师↔学生绑定关系。" />
-  ) : (
-    <DataGrid items={data ?? []} columns={columns} focusMode="cell" resizableColumns>
-      <DataGridHeader>
-        <DataGridRow>
-          {({ renderHeaderCell }) => <DataGridHeaderCell>{renderHeaderCell()}</DataGridHeaderCell>}
-        </DataGridRow>
-      </DataGridHeader>
-      <DataGridBody<AssignmentStudentRow>>
-        {({ item, rowId }) => (
-          <DataGridRow<AssignmentStudentRow> key={rowId}>
-            {({ columnId }) => (
-              <DataGridCell>
-                {columnId === 'username' &&
-                  (item.username ? (
-                    item.username
-                  ) : (
-                    <Caption1 style={{ color: t.colorNeutralForeground4 }}>—</Caption1>
-                  ))}
-                {columnId === 'name' && (
-                  <Text>
-                    {item.name}
-                    {item.submitted_count === 0 && (
-                      <Badge size="large" style={{ marginLeft: tokens.spacingHorizontalS, color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
-                        未交
-                      </Badge>
-                    )}
-                  </Text>
-                )}
-                {columnId === 'submitted_count' && item.submitted_count}
-                {columnId === 'best' && fmtScore(item.best_effective_score)}
-                {columnId === 'total' && fmtScore(item.total_score)}
-                {typeof columnId === 'string' && columnId.startsWith(PROBLEM_COL_PREFIX) &&
-                  problemCell(item, columnId)}
-                {columnId === 'last_submitted_at' && fmtTime(item.last_submitted_at)}
-                {columnId === 'drill' && (
-                  item.last_submission_id === null || item.last_submission_id === undefined ? (
-                    <Caption1 style={{ color: t.colorNeutralForeground4 }}>—</Caption1>
-                  ) : (
+  if (!data || data.length === 0) {
+    return <EmptyView title="暂无学生" description="该场次受众为空，请检查教师↔学生绑定关系。" />;
+  }
+
+  return (
+    <>
+      <BulkActionBar
+        selectedCount={selectedStudentIds.length}
+        actions={[
+          {
+            key: 'remind',
+            label: '提醒交作业',
+            icon: <Alert24Regular />,
+            appearance: 'primary',
+            disabled: reminding,
+            onClick: () => void remind(selectedStudentIds, '选中的学生'),
+          },
+          {
+            key: 'cancel',
+            label: '取消选择',
+            icon: <Dismiss24Regular />,
+            disabled: reminding,
+            onClick: () => setSelectedIds(new Set()),
+          },
+        ]}
+      />
+
+      {notice && (
+        <MessageBar intent={notice.intent} style={{ margin: `${tokens.spacingVerticalS} 0`, borderRadius: tokens.borderRadiusMedium }}>
+          <MessageBarBody>{notice.text}</MessageBarBody>
+          <MessageBarActions>
+            <Button size="small" appearance="subtle" icon={<Dismiss24Regular />} onClick={() => setNotice(null)}>
+              关闭
+            </Button>
+          </MessageBarActions>
+        </MessageBar>
+      )}
+
+      <DataGrid
+        items={data}
+        columns={columns}
+        focusMode="cell"
+        resizableColumns
+        selectionMode="multiselect"
+        getRowId={(item) => item.student_id}
+        selectedItems={selectedIds}
+        onSelectionChange={(_, d) => setSelectedIds(new Set(d.selectedItems))}
+      >
+        <DataGridHeader>
+          <DataGridRow>
+            {({ renderHeaderCell }) => <DataGridHeaderCell>{renderHeaderCell()}</DataGridHeaderCell>}
+          </DataGridRow>
+        </DataGridHeader>
+        <DataGridBody<AssignmentStudentRow>>
+          {({ item, rowId }) => (
+            <DataGridRow<AssignmentStudentRow> key={rowId}>
+              {({ columnId }) => (
+                <DataGridCell>
+                  {columnId === 'username' &&
+                    (item.username ? (
+                      item.username
+                    ) : (
+                      <Caption1 style={{ color: t.colorNeutralForeground4 }}>—</Caption1>
+                    ))}
+                  {columnId === 'name' && (
+                    <Text>
+                      {item.name}
+                      {item.submitted_count === 0 && (
+                        <Badge size="large" style={{ marginLeft: tokens.spacingHorizontalS, color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
+                          未交
+                        </Badge>
+                      )}
+                    </Text>
+                  )}
+                  {columnId === 'submitted_count' && item.submitted_count}
+                  {columnId === 'best' && fmtScore(item.best_effective_score)}
+                  {columnId === 'total' && fmtScore(item.total_score)}
+                  {typeof columnId === 'string' && columnId.startsWith(PROBLEM_COL_PREFIX) &&
+                    problemCell(item, columnId)}
+                  {columnId === 'last_submitted_at' && fmtTime(item.last_submitted_at)}
+                  {columnId === 'drill' && (
+                    item.last_submission_id === null || item.last_submission_id === undefined ? (
+                      <Caption1 style={{ color: t.colorNeutralForeground4 }}>—</Caption1>
+                    ) : (
+                      <Button
+                        appearance="subtle"
+                        size="small"
+                        onClick={() => navigate(`/teacher/submissions/${item.last_submission_id}`)}
+                      >
+                        查看详情
+                      </Button>
+                    )
+                  )}
+                  {columnId === 'remind' && (
                     <Button
                       appearance="subtle"
                       size="small"
-                      onClick={() => navigate(`/teacher/submissions/${item.last_submission_id}`)}
+                      icon={<Alert24Regular />}
+                      disabled={reminding}
+                      onClick={() => void remind([item.student_id], item.name || item.username || '该生')}
                     >
-                      查看详情
+                      提醒
                     </Button>
-                  )
-                )}
-              </DataGridCell>
-            )}
-          </DataGridRow>
-        )}
-      </DataGridBody>
-    </DataGrid>
+                  )}
+                </DataGridCell>
+              )}
+            </DataGridRow>
+          )}
+        </DataGridBody>
+      </DataGrid>
+    </>
   );
 }

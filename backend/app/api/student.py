@@ -9,10 +9,10 @@ from sqlalchemy.orm import Session
 from .. import schemas
 from ..core import config
 from ..core.db import get_db
-from ..core.security import APIError, require_student
+from ..core.security import APIError, require_student, utcnow_str
 from ..models import (Assignment, AssignmentProblem, GroupMember, Problem,
-                      Submission, SubmissionResult, TeacherGroup, TeacherStudent,
-                      TestCase, User)
+                      StudentReminder, Submission, SubmissionResult, TeacherGroup,
+                      TeacherStudent, TestCase, User)
 from ..services import groups as groups_svc
 from ..services import scoring, stats, visibility
 
@@ -305,3 +305,42 @@ def get_submission(submission_id: int,
         .order_by(TestCase.seq)
     ).all()
     return visibility.student_detail(submission, rows)
+
+
+# ---------- 提醒交作业（0.4.1 F6）----------
+
+@router.get("/reminders", response_model=list[schemas.StudentReminderOut])
+def list_reminders(db: Session = Depends(get_db), student: User = Depends(require_student)):
+    """未读提醒，按时间正序；登录后由前端逐条弹窗，确认一条落库一条。"""
+    rows = db.execute(
+        select(StudentReminder, Assignment, User.display_name)
+        .join(Assignment, Assignment.id == StudentReminder.assignment_id)
+        .join(User, User.id == StudentReminder.teacher_id)
+        .where(StudentReminder.student_id == student.id, StudentReminder.read_at.is_(None))
+        .order_by(StudentReminder.created_at, StudentReminder.id)
+    ).all()
+    return [
+        schemas.StudentReminderOut(
+            id=reminder.id,
+            assignment_id=assignment.id,
+            assignment_title=assignment.title,
+            assignment_mode=assignment.mode,
+            end_time=assignment.end_time,
+            teacher_name=teacher_name,
+            created_at=reminder.created_at,
+        )
+        for reminder, assignment, teacher_name in rows
+    ]
+
+
+@router.post("/reminders/{reminder_id}/dismiss")
+def dismiss_reminder(reminder_id: int, db: Session = Depends(get_db),
+                     student: User = Depends(require_student)):
+    """标记已读。只认自己的提醒：别人的 id 一律 404，不泄露是否存在。"""
+    reminder = db.get(StudentReminder, reminder_id)
+    if reminder is None or reminder.student_id != student.id:
+        raise APIError(404, "REMINDER_NOT_FOUND", "提醒不存在")
+    if reminder.read_at is None:
+        reminder.read_at = utcnow_str()
+        db.commit()
+    return {"ok": True}

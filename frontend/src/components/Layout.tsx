@@ -23,6 +23,7 @@ import { useSettings, useThemeMode } from '../context';
 import { BackgroundLayers, resolveBgUrl } from './BackgroundLayers';
 import { CHANGE_PASSWORD_PATH, roleHome, useAuthUser } from './Guard';
 import { TeacherNoticeDialog } from './TeacherNoticeDialog';
+import { StudentReminderDialog } from './StudentReminderDialog';
 
 const NAV_LINKS: Record<Role, { to: string; label: string }[]> = {
   student: [{ to: '/student/assignments', label: '我的场次' }],
@@ -168,6 +169,7 @@ export function Layout() {
       </footer>
 
       {user?.role === 'teacher' && !mustChange && <TeacherNoticeDialog />}
+      {user?.role === 'student' && !mustChange && <StudentReminderDialog />}
     </div>
   );
 }

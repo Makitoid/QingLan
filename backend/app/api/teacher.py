@@ -10,8 +10,8 @@ from .. import schemas
 from ..core.db import get_db
 from ..core.security import APIError, require_teacher, utcnow_str
 from ..models import (Assignment, AssignmentProblem, Group, GroupMember,
-                      Problem, Submission, SubmissionResult, TeacherGroup,
-                      TeacherNotice, TeacherStudent, TeacherSubgroup,
+                      Problem, StudentReminder, Submission, SubmissionResult,
+                      TeacherGroup, TeacherNotice, TeacherStudent, TeacherSubgroup,
                       TeacherSubgroupMember, TestCase, User)
 from ..services import export as export_svc
 from ..services import groups as groups_svc
@@ -530,6 +530,40 @@ def export_assignment_students(assignment_id: int, tz_offset: int = 0,
     payload = export_svc.build_assignment_students_xlsx(assignment.title, rows, tz_offset)
     headers = export_svc.attachment_headers(f"{assignment.title}_成绩.xlsx")
     return StreamingResponse(iter([payload]), media_type=export_svc.XLSX_MEDIA_TYPE, headers=headers)
+
+
+@router.post("/assignments/{assignment_id}/remind", response_model=schemas.RemindResultOut)
+def remind_assignment_students(assignment_id: int, body: schemas.RemindRequest,
+                               db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """提醒学生交作业（0.4.1 F6）：单点或批量都走这里，学生下次登录时弹窗。
+
+    受众限定为本场次的学生（``audience_students`` 与题单可见性同一口径），
+    教师不能借提醒骚扰不在名单里的学生。同一 (场次, 学生) 已有未读提醒时
+    不重复插行，返回 skipped 条数。
+    """
+    assignment = _get_owned_assignment(db, teacher, assignment_id)
+    ids = groups_svc.requested_student_ids(body.student_ids)
+    audience = {s.id for s in groups_svc.audience_students(db, assignment)}
+    if set(ids) - audience:
+        raise APIError(422, "INVALID_STUDENT_IDS", "存在不在本场次受众里的学生")
+
+    pending = set(db.execute(
+        select(StudentReminder.student_id)
+        .where(StudentReminder.assignment_id == assignment.id,
+               StudentReminder.student_id.in_(ids),
+               StudentReminder.read_at.is_(None))
+    ).scalars().all())
+    created = 0
+    for student_id in ids:
+        if student_id in pending:
+            continue
+        db.add(StudentReminder(assignment_id=assignment.id, teacher_id=teacher.id,
+                               student_id=student_id))
+        created += 1
+    log_audit(db, teacher, "assignment_remind", "assignment", assignment.id,
+              {"count": created, "skipped": len(ids) - created, "student_ids": ids})
+    db.commit()
+    return schemas.RemindResultOut(created=created, skipped=len(ids) - created)
 
 
 @router.get("/submissions/{submission_id}", response_model=schemas.SubmissionDetailOut)

@@ -126,6 +126,28 @@ class TeacherNoticeOut(BaseModel):
     created_at: str
 
 
+# ---------- 提醒交作业（0.4.1 F6）----------
+
+class RemindRequest(BaseModel):
+    student_ids: list[int]
+
+
+class RemindResultOut(BaseModel):
+    """新建的提醒条数；skipped = 该场次下已有未读提醒、本次不重复弹的人数。"""
+    created: int
+    skipped: int
+
+
+class StudentReminderOut(BaseModel):
+    id: int
+    assignment_id: int
+    assignment_title: str
+    assignment_mode: str
+    end_time: str
+    teacher_name: str
+    created_at: str
+
+
 class GroupOut(ORMModel):
     id: int
     name: str

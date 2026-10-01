@@ -601,3 +601,25 @@ export interface StudentSubmissionDetail {
 export interface CreateSubmissionResponse {
   id: number;
 }
+
+/* ---------- 提醒交作业（0.4.1 F6） ---------- */
+
+/** 学生的一条未读提醒；后端只下发未读，看过并确认后不再出现。 */
+export interface StudentReminderItem {
+  id: number;
+  assignment_id: number;
+  assignment_title: string;
+  /** homework / test，与学生端场次列表同一口径。 */
+  assignment_mode: string;
+  /** UTC 串，弹窗里按本地时区展示。 */
+  end_time: string;
+  teacher_name: string;
+  created_at: string;
+}
+
+export interface RemindResult {
+  /** 新建的提醒条数 */
+  created: number;
+  /** 该场次下已有未读提醒、本次不重复弹的人数 */
+  skipped: number;
+}

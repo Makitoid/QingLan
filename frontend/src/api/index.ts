@@ -16,6 +16,8 @@ import type {
   BatchResetMode,
   BatchResetResult,
   AuditLogPage,
+  StudentReminderItem,
+  RemindResult,
   AuditLogFilters,
   CreateTeacherBody,
   CreateStudentBody,
@@ -535,6 +537,17 @@ export function exportAssignmentStudents(id: number): Promise<void> {
   return downloadBlob(`/teacher/assignments/${id}/export?tz_offset=${dayjs().utcOffset()}`, `学生成绩-${id}.xlsx`);
 }
 
+/**
+ * 提醒学生交作业（0.4.1 F6）：单点传一个 id，批量传多个。
+ * 已读过提醒的学生会被重新计入 created（再次弹窗）；仍未读的计入 skipped。
+ */
+export function remindAssignmentStudents(assignmentId: number, studentIds: number[]): Promise<RemindResult> {
+  return request<RemindResult>(`/teacher/assignments/${assignmentId}/remind`, {
+    method: 'POST',
+    body: { student_ids: studentIds },
+  });
+}
+
 /* ---------- teacher: submissions ---------- */
 
 export function getTeacherSubmission(id: number): Promise<TeacherSubmissionDetail> {
@@ -572,4 +585,13 @@ export function createSubmission(assignmentId: number, problemId: number, code_t
 
 export function getStudentSubmission(id: number): Promise<StudentSubmissionDetail> {
   return request<StudentSubmissionDetail>(`/student/submissions/${id}`);
+}
+
+/** 未读的「提醒交作业」，登录后弹窗用；读失败不阻塞页面。 */
+export function listStudentReminders(): Promise<StudentReminderItem[]> {
+  return request<StudentReminderItem[]>('/student/reminders');
+}
+
+export function dismissStudentReminder(id: number): Promise<void> {
+  return request<void>(`/student/reminders/${id}/dismiss`, { method: 'POST' });
 }

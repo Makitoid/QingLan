@@ -58,6 +58,7 @@ AUDIT_ACTION_LABELS: dict[str, str] = {
     "score_manual_adjust": "成绩手动调分",
     "problem_batch_group": "题目批量分组",
     "problem_batch_delete": "题目批量删除",
+    "assignment_remind": "提醒学生交作业",
 }
 
 AUDIT_TARGET_LABELS: dict[str, str] = {
