@@ -136,10 +136,12 @@ def attachment_headers(filename: str) -> dict[str, str]:
     return {"Content-Disposition": f"attachment; filename=\"{safe}\"; filename*=UTF-8''{quoted}"}
 
 
-# ---------- 学生名单导出（admin 学生管理）----------
+# ---------- 名单导出（admin 学生管理 / 教师管理）----------
 
 STUDENTS_EXPORT_HEADER = ["学号", "姓名", "分组", "归属教师", "状态"]
 STUDENTS_EXPORT_WIDTHS = [16, 16, 20, 24, 10]
+TEACHERS_EXPORT_HEADER = ["工号", "姓名", "可教组别", "名单学生数", "状态"]
+TEACHERS_EXPORT_WIDTHS = [16, 16, 24, 12, 10]
 
 
 def students_export_row(row: dict) -> list[str]:
@@ -153,38 +155,68 @@ def students_export_row(row: dict) -> list[str]:
     ]
 
 
-def build_students_xlsx(rows: list[dict]) -> bytes:
-    """学生名单 → xlsx 字节串，列固定：学号 | 姓名 | 分组 | 归属教师 | 状态。"""
+def teachers_export_row(row: dict) -> list:
+    """一行教师 → 导出单元格；可教组别即层 2 分配到的组名。"""
+    return [
+        row.get("username", ""),
+        row.get("name", ""),
+        "、".join(row.get("groups", [])),
+        row.get("student_count", 0),
+        "启用" if row.get("is_active") else "已停用",
+    ]
+
+
+def _write_sheet(title: str, header: list[str], widths: list[int], cells_rows: list[list]) -> bytes:
     openpyxl = load_openpyxl()
     from openpyxl.styles import Font
     from openpyxl.utils import get_column_letter
+    from io import BytesIO
 
     wb = openpyxl.Workbook()
     ws = wb.active
-    ws.title = "学生名单"
-    ws.append(STUDENTS_EXPORT_HEADER)
+    ws.title = title
+    ws.append(header)
     for cell in ws[1]:
         cell.font = Font(bold=True)
     ws.freeze_panes = "A2"
-    for idx, width in enumerate(STUDENTS_EXPORT_WIDTHS, start=1):
+    for idx, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(idx)].width = width
-    for row in rows:
-        ws.append(students_export_row(row))
+    for cells in cells_rows:
+        ws.append(cells)
 
-    from io import BytesIO
     buf = BytesIO()
     wb.save(buf)
     return buf.getvalue()
 
 
-def build_students_csv(rows: list[dict]) -> bytes:
-    """学生名单 → csv 字节串；UTF-8 带 BOM，Excel 双击打开不乱码。"""
+def _write_csv(header: list[str], cells_rows: list[list]) -> bytes:
+    """CSV 带 UTF-8 BOM，Excel 双击打开不乱码。"""
     from csv import writer as csv_writer
     from io import StringIO
 
     buf = StringIO()
     w = csv_writer(buf)
-    w.writerow(STUDENTS_EXPORT_HEADER)
-    for row in rows:
-        w.writerow(students_export_row(row))
+    w.writerow(header)
+    for cells in cells_rows:
+        w.writerow(cells)
     return buf.getvalue().encode("utf-8-sig")
+
+
+def build_students_xlsx(rows: list[dict]) -> bytes:
+    """学生名单 → xlsx 字节串，列固定：学号 | 姓名 | 分组 | 归属教师 | 状态。"""
+    return _write_sheet("学生名单", STUDENTS_EXPORT_HEADER, STUDENTS_EXPORT_WIDTHS,
+                        [students_export_row(r) for r in rows])
+
+
+def build_students_csv(rows: list[dict]) -> bytes:
+    return _write_csv(STUDENTS_EXPORT_HEADER, [students_export_row(r) for r in rows])
+
+
+def build_teachers_xlsx(rows: list[dict]) -> bytes:
+    """教师名单 → xlsx 字节串，列固定：工号 | 姓名 | 可教组别 | 名单学生数 | 状态。"""
+    return _write_sheet("教师名单", TEACHERS_EXPORT_HEADER, TEACHERS_EXPORT_WIDTHS,
+                        [teachers_export_row(r) for r in rows])
+
+
+def build_teachers_csv(rows: list[dict]) -> bytes:
+    return _write_csv(TEACHERS_EXPORT_HEADER, [teachers_export_row(r) for r in rows])

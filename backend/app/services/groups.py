@@ -265,6 +265,25 @@ def teachable_group_names_by_student(db: Session, teacher_id: int) -> dict[int, 
     return result
 
 
+def group_names_by_teacher(db: Session, teacher_ids: list[int]) -> dict[int, list[str]]:
+    """{teacher_id: [可教组名]}，按组名排序（0.4.1 教师名单导出用）。"""
+    ids = sorted(dict.fromkeys(teacher_ids))
+    if not ids:
+        return {}
+    rows = db.execute(
+        select(TeacherGroup.teacher_id, Group.name)
+        .join(Group, Group.id == TeacherGroup.group_id)
+        .where(TeacherGroup.teacher_id.in_(ids))
+        .order_by(Group.name, Group.id)
+    ).all()
+    result: dict[int, list[str]] = {}
+    for teacher_id, name in rows:
+        names = result.setdefault(teacher_id, [])
+        if name not in names:
+            names.append(name)
+    return result
+
+
 def student_ids_in_groups(db: Session, group_ids: list[int]) -> dict[int, set[int]]:
     """{group_id: {student_id}}（只含 role=student），组别撤销时的差集统计用。"""
     ids = sorted(dict.fromkeys(group_ids))

@@ -54,6 +54,7 @@ AUDIT_ACTION_LABELS: dict[str, str] = {
     "subgroup_delete": "删除子分组",
     "subgroup_member_change": "子分组名单变更",
     "student_import": "批量导入学生",
+    "teacher_import": "批量导入教师",
     "score_manual_adjust": "成绩手动调分",
     "problem_batch_group": "题目批量分组",
     "problem_batch_delete": "题目批量删除",

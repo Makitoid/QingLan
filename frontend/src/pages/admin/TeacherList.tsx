@@ -20,19 +20,28 @@ import {
   Field,
   Input,
   MessageBar,
+  MessageBarActions,
   MessageBarBody,
   SearchBox,
   tokens,
 
   type TableColumnDefinition,
 } from '@fluentui/react-components';
-import { Add24Regular, Key24Regular } from '@fluentui/react-icons';
-import { createTeacher, listTeachers, resetTeacherPassword, updateTeacherActive } from '../../api';
-import type { TeacherItem, TempCredential } from '../../api/types';
+import { Add24Regular, Dismiss24Regular, Key24Regular } from '@fluentui/react-icons';
+import {
+  createTeacher,
+  exportTeachers,
+  importTeachers,
+  listTeachers,
+  resetTeacherPassword,
+  updateTeacherActive,
+} from '../../api';
+import type { ImportResult, TeacherItem, TempCredential } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, EmptyView, errMessage } from '../../components/StateViews';
 import { PageHeader } from '../../components/PageHeader';
 import { CredentialDialog } from '../../components/CredentialDialog';
+import { ImportExportMenu } from '../../components/ImportExportMenu';
 
 /** LI-01：搜索去抖，避免每敲一个字就打一次 `/admin/teachers?q=`。 */
 const SEARCH_DEBOUNCE_MS = 300;
@@ -60,7 +69,10 @@ export function AdminTeacherList() {
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState({ username: '', display_name: '' });
   const [busy, setBusy] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [importResult, setImportResult] = useState<ImportResult | null>(null);
+  const [notice, setNotice] = useState<{ intent: 'success' | 'error'; text: string } | null>(null);
 
   // PW-09：重置返回的临时凭证明细（教师单个重置也是一行）。
   const [credentials, setCredentials] = useState<TempCredential[] | null>(null);
@@ -83,6 +95,34 @@ export function AdminTeacherList() {
       setFormError(errMessage(err));
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleImportFile = async (file: File) => {
+    setBusy(true);
+    setImportResult(null);
+    setNotice(null);
+    try {
+      setImportResult(await importTeachers(file));
+      reload();
+    } catch (err) {
+      setImportResult({ success_count: 0, failures: [{ line: 0, reason: errMessage(err) }] });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  /** 导出教师名单（0.4.1 F3）：与当前搜索同口径，xlsx / csv 由下拉菜单选择。 */
+  const handleExport = async (format: 'xlsx' | 'csv') => {
+    setExporting(true);
+    setNotice(null);
+    try {
+      await exportTeachers({ format, q: debouncedQ });
+      setNotice({ intent: 'success', text: `已导出教师名单（${format === 'csv' ? 'CSV' : 'Excel'}）。` });
+    } catch (err) {
+      setNotice({ intent: 'error', text: `导出失败：${errMessage(err)}` });
+    } finally {
+      setExporting(false);
     }
   };
 
@@ -123,6 +163,14 @@ export function AdminTeacherList() {
         actions={
           <>
             <SearchBox placeholder="按工号或姓名搜索" value={search} onChange={(_, d) => setSearch(d.value)} style={{ width: '240px' }} />
+            <ImportExportMenu
+              entity="教师"
+              importHint="xlsx 三列：工号｜姓名｜可教组别（可选）"
+              busy={busy}
+              exporting={exporting}
+              onImportFile={(file) => void handleImportFile(file)}
+              onExport={(format) => void handleExport(format)}
+            />
             <Button appearance="primary" icon={<Add24Regular />} onClick={() => setCreateOpen(true)} disabled={busy}>
               新建教师
             </Button>
@@ -130,10 +178,41 @@ export function AdminTeacherList() {
         }
       />
 
+      {notice && (
+        <MessageBar intent={notice.intent} style={{ borderRadius: tokens.borderRadiusMedium }}>
+          <MessageBarBody>{notice.text}</MessageBarBody>
+          <MessageBarActions>
+            <Button size="small" appearance="subtle" icon={<Dismiss24Regular />} onClick={() => setNotice(null)}>
+              关闭
+            </Button>
+          </MessageBarActions>
+        </MessageBar>
+      )}
+
+      {importResult && (
+        <MessageBar
+          intent={importResult.failures.length > 0 ? 'warning' : 'success'}
+          style={{ borderRadius: tokens.borderRadiusMedium }}
+        >
+          <MessageBarBody>
+            导入完成：成功 {importResult.success_count} 条
+            {importResult.failures.length > 0 && `，失败 ${importResult.failures.length} 条：`}
+            {importResult.failures.map((f) => {
+              const who = f.username ?? f.content;
+              return (
+                <div key={`${f.line}-${who ?? ''}`}>
+                  第 {f.line} 行{who ? `（${who}）` : ''}：{f.reason}
+                </div>
+              );
+            })}
+          </MessageBarBody>
+        </MessageBar>
+      )}
+
       {data && data.length === 0 ? (
         <EmptyView
           title={debouncedQ ? '没有匹配的教师' : '还没有教师账号'}
-          description={debouncedQ ? '换个关键词试试，或清空搜索查看全部教师。' : '点击右上角「新建教师」创建账号。'}
+          description={debouncedQ ? '换个关键词试试，或清空搜索查看全部教师。' : '点击右上角「新建教师」或「导入/导出 → 导入教师」创建账号。'}
         />
       ) : (
         <DataGrid items={data ?? []} columns={columns} focusMode="cell" resizableColumns getRowId={(item) => item.id}>

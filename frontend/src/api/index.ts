@@ -143,6 +143,24 @@ export function resetTeacherPassword(id: number): Promise<TempCredential> {
   return request<TempCredential>(`/admin/teachers/${id}/reset_password`, { method: 'POST' });
 }
 
+/** 0.4.1 F3：批量导入教师，列 = 工号｜姓名｜可教组别（与学生导入同一套解析与响应）。 */
+export function importTeachers(file: File): Promise<ImportResult> {
+  const form = new FormData();
+  form.append('file', file);
+  return request<ImportResult>('/admin/teachers/import', { method: 'POST', form });
+}
+
+/** 0.4.1 F3：导出教师名单，`q` 与列表接口同口径。 */
+export function exportTeachers(params: { format: 'xlsx' | 'csv'; q?: string }): Promise<void> {
+  return downloadBlob(
+    `/admin/teachers/export${queryString({
+      format: params.format,
+      q: params.q?.trim(),
+    })}`,
+    params.format === 'csv' ? '教师名单.csv' : '教师名单.xlsx',
+  );
+}
+
 /** BD-06：admin 直绑写接口（PUT）已删除，这里只保留只读查看。 */
 export function getTeacherStudents(id: number): Promise<TeacherRoster> {
   return request<TeacherRoster>(`/admin/teachers/${id}/students`);

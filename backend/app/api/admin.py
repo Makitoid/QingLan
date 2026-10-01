@@ -59,15 +59,18 @@ MAX_BG_BYTES = 5 * 1024 * 1024
 ALLOWED_BG_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 BG_IMAGE_URL = "/api/settings/bg_image"
 
-# ---------- 学生导入（xlsx / txt / csv）----------
+# ---------- 名单导入（xlsx / txt / csv，学生与教师共用解析）----------
 ALLOWED_IMPORT_EXTS = {".xlsx", ".txt", ".csv"}
 MAX_IMPORT_BYTES = 5 * 1024 * 1024
-# 列数：学号、姓名、组别、教师（教师列可选，旧三列文件照常解析）
+# 学生列数：学号、姓名、组别、教师（教师列可选，旧三列文件照常解析）
 IMPORT_COLUMNS = 4
+# 教师列数（0.4.1 F3）：工号、姓名、可教组别
+TEACHER_IMPORT_COLUMNS = 3
 # 组别列 / 教师列内的多值分隔符（两列共用，IM-01）
 GROUP_SEP_RE = re.compile(r"[、，,；;/]")
 TXT_ALT_SEP_RE = re.compile(r"[,，]")
 HEADER_FIRST_CELLS = {"学号", "学生ID"}
+TEACHER_HEADER_FIRST_CELLS = {"工号", "教师ID"}
 # 统一中间表示：(行号, 学号, 姓名, [组别], [教师用户名])
 ImportRow = tuple[int, str, str, list[str], list[str]]
 
@@ -494,12 +497,12 @@ def split_teacher_cell(cell: str) -> list[str]:
     return names
 
 
-def _is_header_row(cells: list[str]) -> bool:
-    return bool(cells) and cells[0].strip() in HEADER_FIRST_CELLS
+def _is_header_row(cells: list[str], header_keys: set[str] = HEADER_FIRST_CELLS) -> bool:
+    return bool(cells) and cells[0].strip() in header_keys
 
 
-def _iter_delimited_cells(filename: str, text: str):
-    """txt/csv → (行号, 前 4 列文本, 原始内容)。空行静默跳过（v2.0 行为变更）。"""
+def _iter_delimited_cells(filename: str, text: str, columns: int = IMPORT_COLUMNS):
+    """txt/csv → (行号, 前 N 列文本, 原始内容)。空行静默跳过（v2.0 行为变更）。"""
     is_csv = Path(filename).suffix.lower() == ".csv"
     for idx, line in enumerate(text.splitlines(), start=1):
         if not line.strip():
@@ -511,13 +514,13 @@ def _iter_delimited_cells(filename: str, text: str):
         else:
             cells = TXT_ALT_SEP_RE.split(line)
         cells = [c.strip() for c in cells]
-        # 第 4 列之后的内容并入教师列，不丢数据（IM-01；旧行为是并入第 3 列组别）
-        if len(cells) > IMPORT_COLUMNS:
-            cells = cells[:IMPORT_COLUMNS - 1] + ["、".join(cells[IMPORT_COLUMNS - 1:])]
-        yield idx, (cells + [""] * IMPORT_COLUMNS)[:IMPORT_COLUMNS], line
+        # 最后一列之后的内容并入该列，不丢数据（IM-01；旧行为是并入第 3 列组别）
+        if len(cells) > columns:
+            cells = cells[:columns - 1] + ["、".join(cells[columns - 1:])]
+        yield idx, (cells + [""] * columns)[:columns], line
 
 
-def _iter_xlsx_cells(raw: bytes):
+def _iter_xlsx_cells(raw: bytes, columns: int = IMPORT_COLUMNS):
     openpyxl = export_svc.load_openpyxl()
     from io import BytesIO
 
@@ -526,11 +529,11 @@ def _iter_xlsx_cells(raw: bytes):
     except Exception:
         raise APIError(422, "INVALID_XLSX", "Excel 文件无法解析，请另存为标准 .xlsx")
     try:
-        ws = wb.worksheets[0]  # 只取第一个 sheet 的前 4 列（第 4 列教师可选）
+        ws = wb.worksheets[0]  # 只取第一个 sheet 的前 N 列
         for idx, row in enumerate(
-            ws.iter_rows(min_col=1, max_col=IMPORT_COLUMNS, values_only=True), start=1
+            ws.iter_rows(min_col=1, max_col=columns, values_only=True), start=1
         ):
-            cells = [cell_to_text(v) for v in (list(row) + [""] * IMPORT_COLUMNS)[:IMPORT_COLUMNS]]
+            cells = [cell_to_text(v) for v in (list(row) + [""] * columns)[:columns]]
             if not any(cells):
                 continue
             yield idx, cells, " | ".join(c for c in cells if c)
@@ -538,8 +541,13 @@ def _iter_xlsx_cells(raw: bytes):
         wb.close()
 
 
-def parse_import_file(filename: str, raw: bytes) -> tuple[list[ImportRow], list[ImportFailure]]:
-    """三种格式统一解析成中间表示；行不合法的进 failures，且绝不解析其组别（无副作用）。"""
+def parse_import_file(filename: str, raw: bytes, columns: int = IMPORT_COLUMNS,
+                      header_keys: set[str] = HEADER_FIRST_CELLS,
+                      ) -> tuple[list[ImportRow], list[ImportFailure]]:
+    """三种格式统一解析成中间表示；行不合法的进 failures，且绝不解析其组别（无副作用）。
+
+    `columns` / `header_keys` 让学生（4 列）与教师（3 列，无教师列）共用这一套解析。
+    """
     ext = Path(filename or "").suffix.lower()
     if ext not in ALLOWED_IMPORT_EXTS:
         raise APIError(415, "UNSUPPORTED_FILE_TYPE", "仅支持 xlsx / txt / csv 格式")
@@ -548,12 +556,13 @@ def parse_import_file(filename: str, raw: bytes) -> tuple[list[ImportRow], list[
     if not raw:
         raise APIError(422, "EMPTY_FILE", "导入文件为空")
 
-    cells_iter = _iter_xlsx_cells(raw) if ext == ".xlsx" else _iter_delimited_cells(filename, decode_text_bytes(raw))
+    cells_iter = (_iter_xlsx_cells(raw, columns) if ext == ".xlsx"
+                  else _iter_delimited_cells(filename, decode_text_bytes(raw), columns))
 
     rows: list[ImportRow] = []
     failures: list[ImportFailure] = []
     for idx, cells, content in cells_iter:
-        if _is_header_row(cells):
+        if _is_header_row(cells, header_keys):
             continue
         username = cells[0] if cells else ""
         display_name = cells[1] if len(cells) > 1 else ""
@@ -669,6 +678,115 @@ async def import_students(file: UploadFile = File(...), db: Session = Depends(ge
     raw = await file.read()
     rows, failures = parse_import_file(file.filename or "", raw)
     return process_import_rows(db, admin, rows, failures)
+
+
+# ---------- 教师名单导入 / 导出（0.4.1 F3，与学生侧同构）----------
+
+def process_teacher_import_rows(db: Session, actor: User, rows: list[ImportRow],
+                                failures: list[ImportFailure] | None = None) -> ImportResult:
+    """落库教师行：列 = 工号 | 姓名 | 可教组别（可选，不存在的组自动创建）。
+
+    与学生导入同一套语义：整批单事务、先全量校验后写入、密码对齐 PW-01
+    （统一初始密码 + 首登强制改密）。第 3 列写进层 2「组-教师分配」，
+    因此导入即决定该教师能看到哪些组的学生。
+    """
+    failures = list(failures or [])
+    existing = {row[0] for row in db.query(User.username).all()}
+    valid: list[ImportRow] = []
+    seen: set[str] = set()
+    for line_no, username, display_name, group_names, _ in rows:
+        if username in existing or username in seen:
+            failures.append(ImportFailure(line=line_no, content=f"{username},{display_name}",
+                                          username=username, reason="工号重复"))
+            continue
+        seen.add(username)
+        valid.append((line_no, username, display_name, group_names, []))
+
+    if not valid:
+        log_audit(db, actor, "teacher_import", "user", None,
+                  {"success_count": 0, "failure_count": len(failures)})
+        db.commit()
+        return ImportResult(success_count=0, failures=sorted(failures, key=lambda f: f.line))
+
+    groups_by_name = {
+        g.name: g for g in groups_svc.ensure_groups(
+            db, [name for _, _, _, names, _ in valid for name in names]
+        )
+    }
+    initial_hash = hash_password(config.DEFAULT_INITIAL_PASSWORD)  # 整批一次 bcrypt（坑 24）
+    created: list[tuple[User, list[str]]] = []
+    for _line_no, username, display_name, group_names, _ in valid:
+        user = User(
+            username=username,
+            password_hash=initial_hash,
+            role="teacher",
+            display_name=display_name,
+            must_change_password=1,
+            password_updated_at=None,
+        )
+        db.add(user)
+        created.append((user, group_names))
+    db.flush()
+    pairs: list[tuple[int, int]] = []
+    for user, group_names in created:
+        for name in group_names:
+            pairs.append((user.id, groups_by_name[name].id))
+        # AU-04：导入建号与单建一致，逐人一条 teacher_create_pw
+        log_audit(db, actor, "teacher_create_pw", "teacher", user.id,
+                  {"must_change_password": True})
+    groups_svc.assign_teacher_groups(db, pairs)
+    log_audit(db, actor, "teacher_import", "user", None,
+              {"success_count": len(created), "failure_count": len(failures)})
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise APIError(409, "IMPORT_FAILED", "导入写入冲突，整批教师未导入")
+    return ImportResult(success_count=len(created), failures=sorted(failures, key=lambda f: f.line))
+
+
+@router.post("/admin/teachers/import", response_model=ImportResult)
+async def import_teachers(file: UploadFile = File(...), db: Session = Depends(get_db),
+                          admin: User = Depends(require_admin)):
+    raw = await file.read()
+    rows, failures = parse_import_file(file.filename or "", raw,
+                                       columns=TEACHER_IMPORT_COLUMNS,
+                                       header_keys=TEACHER_HEADER_FIRST_CELLS)
+    return process_teacher_import_rows(db, admin, rows, failures)
+
+
+@router.get("/admin/teachers/export")
+def export_teachers(format: str = Query(default="xlsx", pattern="^(xlsx|csv)$"),
+                    q: str | None = None,
+                    db: Session = Depends(get_db), _: User = Depends(require_admin)):
+    """导出教师名单（0.4.1 F3）：与列表同筛选口径（q），支持 xlsx / csv。"""
+    teachers = search_users(db.query(User).filter(User.role == "teacher"), q).order_by(User.id).all()
+    group_map = groups_svc.group_names_by_teacher(db, [t.id for t in teachers])
+    counts = groups_svc.roster_count_by_teacher(db)
+    rows = [
+        {
+            "username": t.username,
+            "name": t.display_name,
+            "groups": group_map.get(t.id, []),
+            "student_count": counts.get(t.id, 0),
+            "is_active": bool(t.is_active),
+        }
+        for t in teachers
+    ]
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+    if format == "csv":
+        payload = export_svc.build_teachers_csv(rows)
+        filename = f"教师名单-{stamp}.csv"
+        return StreamingResponse(
+            BytesIO(payload), media_type=export_svc.CSV_MEDIA_TYPE,
+            headers=export_svc.attachment_headers(filename),
+        )
+    payload = export_svc.build_teachers_xlsx(rows)
+    filename = f"教师名单-{stamp}.xlsx"
+    return StreamingResponse(
+        BytesIO(payload), media_type=export_svc.XLSX_MEDIA_TYPE,
+        headers=export_svc.attachment_headers(filename),
+    )
 
 
 @router.patch("/admin/students/{student_id}", response_model=StudentOut)
