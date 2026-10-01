@@ -1,5 +1,5 @@
 import { useTheme } from '../../appTheme';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   Badge,
   Button,
@@ -19,19 +19,12 @@ import {
   Dropdown,
   Field,
   Input,
-  Menu,
-  MenuTrigger,
-  MenuPopover,
-  MenuList,
-  MenuItem,
   MessageBar,
   MessageBarActions,
   MessageBarBody,
   Option,
   SearchBox,
-  Spinner,
   Text,
-  Tooltip,
   tokens,
 
   type TableColumnDefinition,
@@ -40,8 +33,6 @@ import {
 import {
   Add24Regular,
   ArrowExit24Regular,
-  ArrowExportUp24Regular,
-  ArrowUpload24Regular,
   Dismiss24Regular,
   Group24Regular,
   Key24Regular,
@@ -67,6 +58,7 @@ import { useAsync } from '../../components/useAsync';
 import { LoadingView, ErrorView, EmptyView, errMessage } from '../../components/StateViews';
 import { PageHeader } from '../../components/PageHeader';
 import { BulkActionBar } from '../../components/BulkActionBar';
+import { ImportExportMenu } from '../../components/ImportExportMenu';
 import { GroupPickerDialog, type GroupPickerAction } from '../../components/GroupPickerDialog';
 import { GroupsManageDialog } from '../../components/GroupsManageDialog';
 import { CredentialDialog } from '../../components/CredentialDialog';
@@ -115,7 +107,6 @@ export function AdminStudentList() {
     [debouncedQ, groupFilter],
   );
   const { data: groupData, reload: reloadGroups } = useAsync(listGroups, []);
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const [createOpen, setCreateOpen] = useState(false);
   const [form, setForm] = useState({ username: '', display_name: '' });
@@ -180,8 +171,7 @@ export function AdminStudentList() {
     }
   };
 
-  const handleImportFile = async (file: File | undefined) => {
-    if (!file) return;
+  const handleImportFile = async (file: File) => {
     setBusy(true);
     setImportResult(null);
     try {
@@ -193,7 +183,6 @@ export function AdminStudentList() {
       setImportResult({ success_count: 0, failures: [{ line: 0, reason: errMessage(err) }] });
     } finally {
       setBusy(false);
-      if (fileRef.current) fileRef.current.value = '';
     }
   };
 
@@ -356,38 +345,14 @@ export function AdminStudentList() {
             <Button appearance="secondary" icon={<PeopleTeam24Regular />} onClick={() => setManageOpen(true)}>
               分组管理
             </Button>
-            <Tooltip
-              content="导入 Excel（.xlsx），四列：学号｜姓名｜组别｜教师（可选）。组别可留空，不存在的组别自动创建；教师列按工号精确匹配，用于登记「可教组别」。新学生用统一初始密码，首次登录强制改密。"
-              relationship="label"
-            >
-              <Button appearance="secondary" icon={<ArrowUpload24Regular />} onClick={() => fileRef.current?.click()} disabled={busy}>
-                导入学生
-              </Button>
-            </Tooltip>
-            <input
-              ref={fileRef}
-              type="file"
-              accept=".xlsx"
-              style={{ display: 'none' }}
-              onChange={(e) => void handleImportFile(e.target.files?.[0])}
+            <ImportExportMenu
+              entity="学生"
+              importHint="xlsx 四列：学号｜姓名｜组别｜教师（可选），组别不存在则自动创建"
+              busy={busy}
+              exporting={exporting}
+              onImportFile={(file) => void handleImportFile(file)}
+              onExport={(format) => void handleExportStudents(format)}
             />
-            <Menu positioning="below-end">
-              <MenuTrigger disableButtonEnhancement>
-                <Button
-                  appearance="secondary"
-                  icon={exporting ? <Spinner size="tiny" /> : <ArrowExportUp24Regular />}
-                  disabled={exporting || busy}
-                >
-                  导出学生
-                </Button>
-              </MenuTrigger>
-              <MenuPopover>
-                <MenuList>
-                  <MenuItem onClick={() => void handleExportStudents('xlsx')}>导出 Excel</MenuItem>
-                  <MenuItem onClick={() => void handleExportStudents('csv')}>导出 CSV</MenuItem>
-                </MenuList>
-              </MenuPopover>
-            </Menu>
             <Button appearance="primary" icon={<Add24Regular />} onClick={() => setCreateOpen(true)} disabled={busy}>
               新建学生
             </Button>
@@ -446,7 +411,7 @@ export function AdminStudentList() {
       {students.length === 0 ? (
         <EmptyView
           title="没有符合条件的学生"
-          description="清空搜索/筛选看看，或使用「新建学生」「导入学生」添加学生账号。"
+          description="清空搜索/筛选看看，或使用「新建学生」「导入/导出 → 导入学生」添加学生账号。"
         />
       ) : (
         <DataGrid

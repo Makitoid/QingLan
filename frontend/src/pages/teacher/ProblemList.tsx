@@ -251,13 +251,13 @@ export function TeacherProblemList() {
               placeholder="搜索标题或分组"
               value={search}
               onChange={(_, d) => setSearch(d.value)}
-              style={{ width: '220px' }}
+              style={{ width: '160px' }}
             />
             <Dropdown
               selectedOptions={[groupFilter]}
               value={groupOptions.find((o) => o.value === groupFilter)?.label}
               onOptionSelect={(_, d) => setGroupFilter(d.optionValue || GROUP_ALL)}
-              style={{ width: '170px' }}
+              style={{ width: '110px', minWidth: '110px' }}
             >
               {groupOptions.map((o) => (
                 <Option key={o.value} value={o.value}>{o.label}</Option>

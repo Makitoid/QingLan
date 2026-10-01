@@ -15,7 +15,6 @@ import {
   MessageBarActions,
   MessageBarBody,
   Spinner,
-  Text,
   tokens,
 
   type TableColumnDefinition,
@@ -114,11 +113,13 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
 
   // 列顺序与导出的 xlsx 对齐：学号 | 姓名 | 提交次数 | 最高单题分 | 总分 | 每题得分 | 最后提交时间。
   // 「总分」紧跟「最高单题分」，教师对照导出时两列相邻；每题列插在它之后、时间列之前。
+  // 「状态」紧跟姓名，未交一眼可见；末尾两列是行内操作。
   const problemColumns = useMemo(() => problemColumnsFor(data), [data]);
   const columns = useMemo<TableColumnDefinition<AssignmentStudentRow>[]>(() => {
     const cols: TableColumnDefinition<AssignmentStudentRow>[] = [
       createTableColumn({ columnId: 'username', renderHeaderCell: () => '学号' }),
       createTableColumn({ columnId: 'name', renderHeaderCell: () => '姓名' }),
+      createTableColumn({ columnId: 'status', renderHeaderCell: () => '状态' }),
       createTableColumn({ columnId: 'submitted_count', renderHeaderCell: () => '提交次数' }),
       createTableColumn({ columnId: 'best', renderHeaderCell: () => '最高单题分' }),
       createTableColumn({ columnId: 'total', renderHeaderCell: () => '总分' }),
@@ -138,6 +139,10 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
     );
     return cols;
   }, [problemColumns]);
+
+  // 列宽总和：DataGrid 默认把列压进容器，多题场次会挤到看不清。
+  // 外层套横向滚动，表格按这个下限铺开，教师滑动查看全部列。
+  const gridMinWidth = 760 + problemColumns.length * 72;
 
   const remind = async (ids: number[], label: string) => {
     if (ids.length === 0 || reminding) return;
@@ -203,16 +208,18 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
         </MessageBar>
       )}
 
-      <DataGrid
-        items={data}
-        columns={columns}
-        focusMode="cell"
-        resizableColumns
-        selectionMode="multiselect"
-        getRowId={(item) => item.student_id}
-        selectedItems={selectedIds}
-        onSelectionChange={(_, d) => setSelectedIds(new Set(d.selectedItems))}
-      >
+      <div style={{ overflowX: 'auto' }}>
+        <DataGrid
+          items={data}
+          columns={columns}
+          focusMode="cell"
+          resizableColumns
+          selectionMode="multiselect"
+          getRowId={(item) => item.student_id}
+          selectedItems={selectedIds}
+          onSelectionChange={(_, d) => setSelectedIds(new Set(d.selectedItems))}
+          style={{ minWidth: gridMinWidth }}
+        >
         <DataGridHeader>
           <DataGridRow>
             {({ renderHeaderCell }) => <DataGridHeaderCell>{renderHeaderCell()}</DataGridHeaderCell>}
@@ -229,15 +236,17 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
                     ) : (
                       <Caption1 style={{ color: t.colorNeutralForeground4 }}>—</Caption1>
                     ))}
-                  {columnId === 'name' && (
-                    <Text>
-                      {item.name}
-                      {item.submitted_count === 0 && (
-                        <Badge size="large" style={{ marginLeft: tokens.spacingHorizontalS, color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
-                          未交
-                        </Badge>
-                      )}
-                    </Text>
+                  {columnId === 'name' && item.name}
+                  {columnId === 'status' && (
+                    item.submitted_count === 0 ? (
+                      <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
+                        未交
+                      </Badge>
+                    ) : (
+                      <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>
+                        已交
+                      </Badge>
+                    )
                   )}
                   {columnId === 'submitted_count' && item.submitted_count}
                   {columnId === 'best' && fmtScore(item.best_effective_score)}
@@ -274,7 +283,8 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
             </DataGridRow>
           )}
         </DataGridBody>
-      </DataGrid>
+        </DataGrid>
+      </div>
     </>
   );
 }
