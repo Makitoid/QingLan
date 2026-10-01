@@ -11,21 +11,36 @@ import {
   DataGridHeader,
   DataGridHeaderCell,
   DataGridRow,
+  Dialog,
+  DialogActions,
+  DialogBody,
+  DialogContent,
+  DialogSurface,
+  DialogTitle,
+  Field,
+  Input,
   MessageBar,
   MessageBarActions,
   MessageBarBody,
   Spinner,
   Text,
+  Tooltip,
   tokens,
 
   type TableColumnDefinition,
 } from '@fluentui/react-components';
-import { Alert24Regular, ArrowDownload24Regular, Dismiss24Regular } from '@fluentui/react-icons';
-import { exportAssignmentStudents, getAssignmentStudents, remindAssignmentStudents } from '../api';
+import { Alert24Regular, ArrowDownload24Regular, ArrowRedo24Regular, Dismiss24Regular } from '@fluentui/react-icons';
+import {
+  cancelAssignmentRetry,
+  exportAssignmentStudents,
+  getAssignmentStudents,
+  remindAssignmentStudents,
+  retryAssignmentStudents,
+} from '../api';
 import type { AssignmentProblemScore, AssignmentStudentRow } from '../api/types';
 import { useAsync } from './useAsync';
 import { LoadingView, ErrorView, EmptyView, errMessage } from './StateViews';
-import { fmtTime } from './time';
+import { fmtTime, toUtcString } from './time';
 import { fmtScore } from './score';
 
 /** 每题得分列的 id 前缀，列 id 里带 problem_id 以便单元格回查该题的分。 */
@@ -96,8 +111,19 @@ export function useAssignmentStudentsExport(assignmentId: number) {
 /**
  * 0.4.0 F4：逐学生成绩表（原 /teacher/assignments/:id/students 页面主体），
  * 现内嵌进场次总览的「学生答题情况」块。自己取数、自己出动态每题列。
+ *
+ * `passScore` / `endTime` 由总览页透传：前者决定「不及格」怎么标，后者是重做期限的
+ * 默认值与下限（后端要求重做期限必须晚于场次结束时间）。
  */
-export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number }) {
+export function AssignmentStudentsTable({
+  assignmentId,
+  passScore = null,
+  endTime = '',
+}: {
+  assignmentId: number;
+  passScore?: number | null;
+  endTime?: string;
+}) {
   const t = useTheme();
   const navigate = useNavigate();
   const { data, error, loading, reload } = useAsync<AssignmentStudentRow[]>(
@@ -110,6 +136,10 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
   // F6：提醒只对未交的学生发；换场次（组件重挂载）自然回到未发状态。
   const [reminding, setReminding] = useState(false);
   const [notice, setNotice] = useState<{ intent: 'success' | 'warning' | 'error'; text: string } | null>(null);
+  // F9：打回不及格学生——先弹一个期限输入框，确认后才写库
+  const [retryOpen, setRetryOpen] = useState(false);
+  const [retryDeadline, setRetryDeadline] = useState('');
+  const [retrying, setRetrying] = useState(false);
 
   // 列顺序与导出的 xlsx 对齐：学号 | 姓名 | 提交次数 | 最高单题分 | 总分 | 每题得分 | 最后提交时间。
   // 「总分」紧跟「最高单题分」，教师对照导出时两列相邻；每题列插在它之后、时间列之前。
@@ -166,6 +196,55 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
 
   // 已交的学生不需要再被提醒，所以未交名单既是批量按钮的收件人，也是它的可用性开关。
   const unsubmitted = (data ?? []).filter((r) => r.submitted_count === 0);
+  // F9：不及格 = 设了及格线、有提交、总分严格低于线；未交的人归提醒管。
+  const failing = (data ?? []).filter(
+    (r) => passScore !== null && r.submitted_count > 0 && r.total_score < passScore,
+  );
+
+  const openRetryDialog = () => {
+    // 默认给三天重做时间；后端要求期限必须晚于场次结束时间
+    const base = endTime ? new Date(endTime.replace(' ', 'T') + 'Z') : new Date();
+    setRetryDeadline(Number.isNaN(base.getTime())
+      ? new Date().toISOString().slice(0, 16)
+      : new Date(base.getTime() + 3 * 86400000).toISOString().slice(0, 16));
+    setRetryOpen(true);
+  };
+
+  const submitRetry = async () => {
+    if (retrying || !retryDeadline) return;
+    setRetrying(true);
+    setNotice(null);
+    try {
+      // student_ids 留空 = 由服务端按及格线挑人，教师端和学生端用的是同一份判定
+      const result = await retryAssignmentStudents(assignmentId, toUtcString(retryDeadline));
+      setNotice({
+        intent: 'success',
+        text: `已打回 ${result.student_ids.length} 名不及格学生重做，截止 ${fmtTime(retryDeadline)}；期限内不限提交次数。`,
+      });
+      setRetryOpen(false);
+      reload();
+    } catch (err) {
+      setNotice({ intent: 'error', text: `打回失败：${errMessage(err)}` });
+    } finally {
+      setRetrying(false);
+    }
+  };
+
+  const cancelRetry = async (item: AssignmentStudentRow) => {
+    if (retrying) return;
+    if (!window.confirm(`撤销「${item.name || item.username}」的打回重做？该生的提交窗口会回到场次原本的结束时间。`)) return;
+    setRetrying(true);
+    setNotice(null);
+    try {
+      await cancelAssignmentRetry(assignmentId, item.student_id);
+      setNotice({ intent: 'success', text: `已撤销「${item.name || item.username}」的打回重做。` });
+      reload();
+    } catch (err) {
+      setNotice({ intent: 'error', text: `撤销失败：${errMessage(err)}` });
+    } finally {
+      setRetrying(false);
+    }
+  };
 
   return (
     <>
@@ -174,6 +253,17 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
         action={
           <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalS }}>
             {exportButton}
+            {failing.length > 0 && (
+              <Button
+                appearance="outline"
+                style={{ color: t.colorPaletteRedForeground1 }}
+                icon={<ArrowRedo24Regular />}
+                disabled={retrying}
+                onClick={openRetryDialog}
+              >
+                {`打回不及格学生（${failing.length}）`}
+              </Button>
+            )}
             {unsubmitted.length > 0 && (
               <Button
                 appearance="primary"
@@ -247,15 +337,34 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
                     ))}
                   {columnId === 'name' && item.name}
                   {columnId === 'status' && (
-                    item.submitted_count === 0 ? (
-                      <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
-                        未交
-                      </Badge>
-                    ) : (
-                      <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>
-                        已交
-                      </Badge>
-                    )
+                    <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalXS, flexWrap: 'wrap' }}>
+                      {item.submitted_count === 0 ? (
+                        <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
+                          未交
+                        </Badge>
+                      ) : passScore !== null && item.total_score < passScore ? (
+                        <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }}>
+                          不及格
+                        </Badge>
+                      ) : (
+                        <Badge className="ql-badge-status" size="large" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }}>
+                          已交
+                        </Badge>
+                      )}
+                      {item.retry_deadline && (
+                        <Tooltip relationship="label" content={`重做截止 ${fmtTime(item.retry_deadline)}，可撤销`}>
+                          <Button
+                            size="small"
+                            appearance="subtle"
+                            style={{ color: t.colorPaletteRedForeground1 }}
+                            disabled={retrying}
+                            onClick={() => void cancelRetry(item)}
+                          >
+                            打回重做 · 撤销
+                          </Button>
+                        </Tooltip>
+                      )}
+                    </div>
                   )}
                   {columnId === 'submitted_count' && item.submitted_count}
                   {columnId === 'best' && fmtScore(item.best_effective_score)}
@@ -299,6 +408,39 @@ export function AssignmentStudentsTable({ assignmentId }: { assignmentId: number
         </DataGrid>
         </div>
       </div>
+
+      <Dialog open={retryOpen} onOpenChange={(_, d) => { if (!retrying) setRetryOpen(d.open); }}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>打回不及格学生重做</DialogTitle>
+            <DialogContent>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
+                <Text>
+                  {`本次会打回 ${failing.length} 名总分低于及格线 ${passScore ?? ''} 分的学生，` +
+                    '并让他们在该场次重新获得提交入口。'}
+                </Text>
+                <Field label="重做截止时间" required>
+                  <Input type="datetime-local" value={retryDeadline} onChange={(_, d) => setRetryDeadline(d.value)} />
+                </Field>
+                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                  {`期限必须晚于场次结束时间（${fmtTime(endTime)}）。期限内这些学生不限提交次数，` +
+                    '场次卡片上会给他们显示红色「打回重做」标记。'}
+                </Caption1>
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setRetryOpen(false)} disabled={retrying}>取消</Button>
+              <Button
+                appearance="primary"
+                disabled={retrying || !retryDeadline}
+                onClick={() => void submitRetry()}
+              >
+                {retrying ? '提交中…' : `打回 ${failing.length} 人`}
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
         </>
       )}
     </>

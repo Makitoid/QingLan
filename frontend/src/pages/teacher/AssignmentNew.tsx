@@ -63,10 +63,15 @@ export function TeacherAssignmentNew() {
   const [endTime, setEndTime] = useState('');
   const [limitEnabled, setLimitEnabled] = useState(false);
   const [maxSubmissions, setMaxSubmissions] = useState<number>(3);
+  // 0.4.1 F9：及格线（绝对分）；不开就是 null，本场不判及格
+  const [passEnabled, setPassEnabled] = useState(false);
+  const [passScore, setPassScore] = useState<number>(60);
   const [scorePolicy, setScorePolicy] = useState<ScorePolicy>('best');
   const [audienceMode, setAudienceMode] = useState<AudienceMode>('all');
   const [pickedSubgroups, setPickedSubgroups] = useState<number[]>([]);
   const [selected, setSelected] = useState<SelectedProblem[]>([]);
+  // 及格线的上限提示：已选题目的满分之和
+  const fullTotal = selected.reduce((sum, s) => sum + (Number(s.full_score) || 0), 0);
   const [busy, setBusy] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -171,6 +176,7 @@ export function TeacherAssignmentNew() {
         score_policy: scorePolicy,
         audience_mode: audienceMode,
         subgroup_ids: audienceMode === 'subgroup' ? pickedSubgroups : [],
+        pass_score: passEnabled ? passScore : null,
         problems: selected.map((s, i) => ({ problem_id: s.problem_id, seq: i + 1, full_score: s.full_score })),
       });
       navigate(`/teacher/assignments/${created.id}`, { replace: true });
@@ -257,6 +263,25 @@ export function TeacherAssignmentNew() {
               </div>
             </Field>
           </div>
+
+          <Field label="及格线">
+            <div style={{ display: 'flex', alignItems: 'center', gap: tokens.spacingHorizontalM }}>
+              <Checkbox checked={passEnabled} onChange={(_, d) => setPassEnabled(Boolean(d.checked))} label="设定及格线" />
+              <NumberInput
+                value={passScore}
+                min={0}
+                step={5}
+                disabled={!passEnabled}
+                onValue={setPassScore}
+                width="120px"
+              />
+              <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                {passEnabled
+                  ? `本场满分 ${fullTotal} 分；总分低于 ${passScore} 分的学生会被列为不及格，可一键打回重做。`
+                  : '不设定则本场不判及格，也就没有「不及格名单」。'}
+              </Caption1>
+            </div>
+          </Field>
 
           <Field label="发布受众">
             <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>

@@ -178,7 +178,7 @@ export function TeacherAssignmentOverview() {
       </Card>
 
       <Card size="medium">
-        <AssignmentStudentsTable assignmentId={assignmentId} />
+        <AssignmentStudentsTable assignmentId={assignmentId} passScore={a.pass_score} endTime={a.end_time} />
       </Card>
     </div>
   );

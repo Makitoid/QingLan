@@ -8,6 +8,7 @@ import { LoadingView, ErrorView, EmptyView } from '../../components/StateViews';
 import { fmtTime } from '../../components/time';
 import { fmtScore } from '../../components/score';
 import { PageHeader } from '../../components/PageHeader';
+import { AssignmentStateBadge } from '../../components/VerdictBadge';
 
 const columns: TableColumnDefinition<StudentAssignmentItem>[] = [
   createTableColumn({ columnId: 'title', renderHeaderCell: () => '场次' }),
@@ -74,19 +75,7 @@ export function StudentAssignmentList() {
                       </Caption1>
                     )}
                     {columnId === 'state' && (
-                      <Badge
-                        className="ql-badge-status"
-                        size="large"
-                        style={
-                          item.state === 'ended'
-                            ? { color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 }
-                            : item.state === 'ending'
-                              ? { color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }
-                              : { color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }
-                        }
-                      >
-                        {item.state === 'ended' ? '已结束' : item.state === 'ending' ? '即将结束' : '进行中'}
-                      </Badge>
+                      <AssignmentStateBadge state={item.state} />
                     )}
                     {columnId === 'score' &&
                       (() => {

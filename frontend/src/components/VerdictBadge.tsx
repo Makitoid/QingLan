@@ -1,6 +1,6 @@
 import { useTheme } from '../appTheme';
 import { Badge, tokens } from '@fluentui/react-components';
-import type { Verdict } from '../api/types';
+import type { AssignmentState, Verdict } from '../api/types';
 
 interface VerdictColors {
   fg: string;
@@ -52,6 +52,33 @@ export function StatusBadge({ status }: { status: string }) {
   return (
     <Badge size="large" style={{ color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2, borderRadius: tokens.borderRadiusMedium }}>
       已判题
+    </Badge>
+  );
+}
+
+/** 场次状态的中文与色调；'retry' 是 0.4.1 F9 的「打回重做」，红底、单独一档。 */
+const ASSIGNMENT_STATE: Record<AssignmentState, { label: string; tone: 'green' | 'red' | 'neutral' }> = {
+  ongoing: { label: '进行中', tone: 'green' },
+  ending: { label: '即将结束', tone: 'red' },
+  ended: { label: '已结束', tone: 'neutral' },
+  retry: { label: '打回重做', tone: 'red' },
+};
+
+/**
+ * 学生端的场次状态徽标。列表与详情都用它——状态取值从 3 个变 4 个之后，
+ * 两处各写一条三元链迟早会漏掉一支。
+ */
+export function AssignmentStateBadge({ state }: { state: AssignmentState }) {
+  const t = useTheme();
+  const meta = ASSIGNMENT_STATE[state] ?? ASSIGNMENT_STATE.ongoing;
+  const palette = meta.tone === 'green'
+    ? { color: t.colorPaletteGreenForeground1, backgroundColor: t.colorPaletteGreenBackground2 }
+    : meta.tone === 'red'
+      ? { color: t.colorPaletteRedForeground1, backgroundColor: t.colorPaletteRedBackground2 }
+      : { color: t.colorNeutralForeground3, backgroundColor: t.colorNeutralBackground4 };
+  return (
+    <Badge className="ql-badge-status" size="large" style={{ ...palette, borderRadius: tokens.borderRadiusMedium }}>
+      {meta.label}
     </Badge>
   );
 }
