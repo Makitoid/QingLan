@@ -30,7 +30,7 @@ export function PreBlock({ text }: { text: string }) {
  *
  * 学生端不用它：隐藏测试点的输入输出不能下发给考生。
  */
-export function ProblemCases({ cases }: { cases: TestCase[] }) {
+export function ProblemCases({ cases, stacked = false }: { cases: TestCase[]; stacked?: boolean }) {
   const t = useTheme();
   const sorted = [...cases].sort((a, b) => a.seq - b.seq);
   const sampleCount = sorted.filter((c) => c.is_sample).length;
@@ -53,7 +53,7 @@ export function ProblemCases({ cases }: { cases: TestCase[] }) {
           key={c.id}
           style={{
             display: 'grid',
-            gridTemplateColumns: '1fr 1fr',
+            gridTemplateColumns: stacked ? '1fr' : '1fr 1fr',
             gap: tokens.spacingHorizontalM,
             marginTop: tokens.spacingVerticalS,
           }}

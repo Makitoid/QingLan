@@ -165,7 +165,7 @@ export function AdminTeacherList() {
             <SearchBox placeholder="按工号或姓名搜索" value={search} onChange={(_, d) => setSearch(d.value)} style={{ width: '240px' }} />
             <ImportExportMenu
               entity="教师"
-              importHint="xlsx 三列：工号｜姓名｜可教组别（可选）"
+              importHint="excel导入：工号｜姓名｜可教组别（可选）"
               busy={busy}
               exporting={exporting}
               onImportFile={(file) => void handleImportFile(file)}

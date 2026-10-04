@@ -347,7 +347,7 @@ export function AdminStudentList() {
             </Button>
             <ImportExportMenu
               entity="学生"
-              importHint="xlsx 四列：学号｜姓名｜组别｜教师（可选），组别不存在则自动创建"
+              importHint="excel导入：格式为学号｜姓名｜组别｜教师（可选），组别不存在则自动创建"
               busy={busy}
               exporting={exporting}
               onImportFile={(file) => void handleImportFile(file)}

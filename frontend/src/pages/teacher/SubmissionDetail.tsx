@@ -21,7 +21,7 @@ import {
   tokens,
   type TableColumnDefinition,
 } from '@fluentui/react-components';
-import { ArrowSync24Regular, Save24Regular, Delete24Regular } from '@fluentui/react-icons';
+import { ChevronDown20Regular, ArrowSync24Regular, Save24Regular, Delete24Regular } from '@fluentui/react-icons';
 import { getTeacherProblem, getTeacherSubmission, rejudgeSubmission, setManualScore } from '../../api';
 import type {
   CompareMode,
@@ -63,7 +63,7 @@ export function TeacherSubmissionPage() {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ intent: 'success' | 'error'; text: string } | null>(null);
 
-  // F5：「查看原题」页内展开，首次展开才拉题面；切换提交（侧栏换题）时整体重置。
+  // F5：原题在左侧栏展开，首次展开才拉题面；切换提交（侧栏换题）时整体重置。
   const [problemOpen, setProblemOpen] = useState(false);
   const [problem, setProblem] = useState<ProblemDetail | null>(null);
   const [problemLoading, setProblemLoading] = useState(false);
@@ -186,20 +186,95 @@ export function TeacherSubmissionPage() {
       )}
 
       <div style={{ display: 'flex', gap: tokens.spacingVerticalL, alignItems: 'flex-start' }}>
-        <ProblemSwitchNav
-          assignmentId={data.assignment_id}
-          studentId={data.user_id}
-          currentProblemId={data.problem_id}
-        />
+        <div style={{ width: '272px', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL }}>
+          <ProblemSwitchNav
+            assignmentId={data.assignment_id}
+            studentId={data.user_id}
+            currentProblemId={data.problem_id}
+          />
+          <Card size="small" style={{ minWidth: 0 }}>
+            <div
+              onClick={toggleProblem}
+              role="button"
+              tabIndex={0}
+              aria-expanded={problemOpen}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  toggleProblem();
+                }
+              }}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: tokens.spacingHorizontalS,
+                cursor: 'pointer',
+                borderRadius: tokens.borderRadiusMedium,
+                userSelect: 'none',
+              }}
+            >
+              <Text weight="semibold" size={300}>
+                原题
+              </Text>
+              <ChevronDown20Regular
+                style={{
+                  transform: problemOpen ? 'rotate(180deg)' : 'rotate(0deg)',
+                  transition: `transform ${tokens.durationNormal} ease`,
+                }}
+              />
+            </div>
+            <div
+              aria-hidden={!problemOpen}
+              style={{
+                display: 'grid',
+                gridTemplateRows: problemOpen ? '1fr' : '0fr',
+                transition: `grid-template-rows ${tokens.durationSlow} ease`,
+              }}
+            >
+              <div
+                style={{
+                  minHeight: 0,
+                  overflow: 'hidden',
+                  opacity: problemOpen ? 1 : 0,
+                  transition: `opacity ${tokens.durationNormal} ease`,
+                }}
+              >
+                <div style={{ paddingTop: tokens.spacingVerticalS }}>
+                {problemLoading ? (
+                  <div style={{ display: 'flex', justifyContent: 'center', padding: tokens.spacingVerticalL }}>
+                    <Spinner size="tiny" label="加载原题…" labelPosition="after" />
+                  </div>
+                ) : problemError ? (
+                  <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
+                    <MessageBarBody>{problemError}</MessageBarBody>
+                  </MessageBar>
+                ) : problem ? (
+                  <>
+                    <Caption1 style={{ display: 'block', color: t.colorNeutralForeground3 }}>
+                      时间限制 {problem.time_limit_ms} ms · 内存限制 {problem.memory_limit_mb} MB · 比对模式 {COMPARE_LABELS[problem.compare_mode]}
+                    </Caption1>
+                    <Text weight="semibold">{problem.title}</Text>
+                    <MarkdownBody>{problem.description}</MarkdownBody>
+                    <Divider />
+                    <Text weight="semibold">输入格式</Text>
+                    <MarkdownBody>{problem.input_format}</MarkdownBody>
+                    <Text weight="semibold">输出格式</Text>
+                    <MarkdownBody>{problem.output_format}</MarkdownBody>
+                    <ProblemCases cases={problem.cases} stacked />
+                  </>
+                ) : null}
+                </div>
+              </div>
+            </div>
+          </Card>
+        </div>
         <div style={{ flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalL }}>
       <Card size="medium">
         <CardHeader
           header={<Text weight="semibold">判分与操作</Text>}
           action={
             <div style={{ display: 'flex', gap: tokens.spacingHorizontalS }}>
-              <Button appearance="secondary" onClick={toggleProblem}>
-                {problemOpen ? '收起原题' : '查看原题'}
-              </Button>
               <Button appearance="secondary" icon={<ArrowSync24Regular />} onClick={handleRejudge} disabled={busy}>
                 重判
               </Button>
@@ -246,35 +321,6 @@ export function TeacherSubmissionPage() {
           </MessageBar>
         )}
       </Card>
-
-      {problemOpen && (
-        <Card size="medium">
-          <CardHeader header={<Text weight="semibold">原题</Text>} />
-          {problemLoading ? (
-            <div style={{ display: 'flex', justifyContent: 'center', padding: tokens.spacingVerticalL }}>
-              <Spinner size="tiny" label="加载原题…" labelPosition="after" />
-            </div>
-          ) : problemError ? (
-            <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
-              <MessageBarBody>{problemError}</MessageBarBody>
-            </MessageBar>
-          ) : problem ? (
-            <>
-              <Caption1 style={{ display: 'block', color: t.colorNeutralForeground3 }}>
-                时间限制 {problem.time_limit_ms} ms · 内存限制 {problem.memory_limit_mb} MB · 比对模式 {COMPARE_LABELS[problem.compare_mode]}
-              </Caption1>
-              <Text weight="semibold">{problem.title}</Text>
-              <MarkdownBody>{problem.description}</MarkdownBody>
-              <Divider />
-              <Text weight="semibold">输入格式</Text>
-              <MarkdownBody>{problem.input_format}</MarkdownBody>
-              <Text weight="semibold">输出格式</Text>
-              <MarkdownBody>{problem.output_format}</MarkdownBody>
-              <ProblemCases cases={problem.cases} />
-            </>
-          ) : null}
-        </Card>
-      )}
 
       <Card size="medium">
         <CardHeader header={<Text weight="semibold">提交的代码（只读）</Text>} />

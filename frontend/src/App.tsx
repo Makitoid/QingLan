@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { FluentProvider } from '@fluentui/react-components';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import type { SiteSettings } from './api/types';
@@ -58,11 +58,32 @@ function AdminAuditRoute() {
   return <AuditLogPage />;
 }
 
+/** 主题切换的瞬间给全元素挂颜色过渡，切换完成后移除，避免明暗互换时的生硬跳变。 */
+function useThemeTransition(dep: unknown) {
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    const style = document.createElement('style');
+    style.textContent =
+      '*, *::before, *::after { transition: background-color 250ms ease, color 250ms ease, border-color 250ms ease, fill 250ms ease, stroke 250ms ease, box-shadow 250ms ease !important; }';
+    document.head.appendChild(style);
+    const timer = setTimeout(() => style.remove(), 350);
+    return () => {
+      clearTimeout(timer);
+      style.remove();
+    };
+  }, [dep]);
+}
+
 function ThemedApp() {
   const { effective } = useSettings();
   const { isDark } = useThemeMode();
   const { light: lightBrand, dark: darkBrand } = resolveBrandColors(effective);
   const themes = useMemo(() => buildThemes(lightBrand, darkBrand), [lightBrand, darkBrand]);
+  useThemeTransition(isDark);
 
   const theme = isDark ? themes.dark : themes.light;
   return (
