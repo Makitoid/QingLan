@@ -1,0 +1,93 @@
+{
+ "scanned": {
+  "pip": 37,
+  "npm": 86
+ },
+ "results": [
+  {
+   "package": "mako",
+   "version": "1.4.1",
+   "ecosystem": "PyPI",
+   "findings": [
+    {
+     "id": "GHSA-5639-2j2p-m4mx",
+     "cves": [
+      "CVE-2026-102991"
+     ],
+     "sev": "MEDIUM",
+     "cvss": 5.5,
+     "summary": "Mako: Path traversal via drive-letter URI on Windows in TemplateLookup",
+     "fixed_in": [
+      "1.4.2"
+     ],
+     "kev": false,
+     "published": "2026-10-05"
+    }
+   ]
+  },
+  {
+   "package": "pyjwt",
+   "version": "2.14.0",
+   "ecosystem": "PyPI",
+   "findings": [
+    {
+     "id": "GHSA-42vr-xj54-vc7v",
+     "cves": [
+      "CVE-2026-101918"
+     ],
+     "sev": "MEDIUM",
+     "cvss": 5.5,
+     "summary": "PyJWT: Unauthenticated RecursionError DoS in pre-verification payload parse (PyJWKClient.get_signing_key_from_jwt / verify_signature=False)",
+     "fixed_in": [
+      "2.15.0"
+     ],
+     "kev": false,
+     "published": "2026-09-30"
+    },
+    {
+     "id": "GHSA-x33g-cr3x-6449",
+     "cves": [
+      "CVE-2026-102275"
+     ],
+     "sev": "MEDIUM",
+     "cvss": 5.5,
+     "summary": "PyJWT accepts inconsistent OKP x/d JWKs, causing public/private key identity confusion",
+     "fixed_in": [
+      "2.15.0"
+     ],
+     "kev": false,
+     "published": "2026-10-05"
+    },
+    {
+     "id": "PYSEC-2026-4141",
+     "cves": [
+      "CVE-2026-101918"
+     ],
+     "sev": "UNKNOWN",
+     "cvss": 0.0,
+     "summary": "PyJWT: Unauthenticated RecursionError DoS in pre-verification payload parse (PyJWKClient.get_signing_key_from_jwt / verify_signature=False)",
+     "fixed_in": [
+      "2.15.0"
+     ],
+     "kev": false,
+     "published": "2026-10-01"
+    },
+    {
+     "id": "PYSEC-2026-4183",
+     "cves": [
+      "CVE-2026-102275"
+     ],
+     "sev": "UNKNOWN",
+     "cvss": 0.0,
+     "summary": "",
+     "fixed_in": [
+      "2.15.0"
+     ],
+     "kev": false,
+     "published": "2026-09-28"
+    }
+   ]
+  }
+ ],
+ "errors": []
+}
