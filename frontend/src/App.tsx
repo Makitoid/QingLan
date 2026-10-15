@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef } from 'react';
 import { FluentProvider } from '@fluentui/react-components';
 import { HashRouter, Navigate, Route, Routes } from 'react-router-dom';
 import type { SiteSettings } from './api/types';
@@ -22,12 +22,11 @@ import { StudentSubmissionPage } from './pages/student/SubmissionDetail';
 
 import { TeacherProblemList } from './pages/teacher/ProblemList';
 import { TeacherProblemEdit } from './pages/teacher/ProblemEdit';
+import { TeacherProblemView } from './pages/teacher/ProblemView';
 import TeacherStudentList from './pages/teacher/StudentList';
 import { TeacherAssignmentList } from './pages/teacher/AssignmentList';
 import { TeacherAssignmentNew } from './pages/teacher/AssignmentNew';
 import { TeacherAssignmentOverview } from './pages/teacher/AssignmentOverview';
-import { TeacherAssignmentStudents } from './pages/teacher/AssignmentStudents';
-import { TeacherStudentScores } from './pages/teacher/StudentScores';
 import { TeacherSubmissionPage } from './pages/teacher/SubmissionDetail';
 
 import { AdminTeacherList } from './pages/admin/TeacherList';
@@ -59,11 +58,32 @@ function AdminAuditRoute() {
   return <AuditLogPage />;
 }
 
+/** 主题切换的瞬间给全元素挂颜色过渡，切换完成后移除，避免明暗互换时的生硬跳变。 */
+function useThemeTransition(dep: unknown) {
+  const first = useRef(true);
+  useEffect(() => {
+    if (first.current) {
+      first.current = false;
+      return;
+    }
+    const style = document.createElement('style');
+    style.textContent =
+      '*, *::before, *::after { transition: background-color 250ms ease, color 250ms ease, border-color 250ms ease, fill 250ms ease, stroke 250ms ease, box-shadow 250ms ease !important; }';
+    document.head.appendChild(style);
+    const timer = setTimeout(() => style.remove(), 350);
+    return () => {
+      clearTimeout(timer);
+      style.remove();
+    };
+  }, [dep]);
+}
+
 function ThemedApp() {
   const { effective } = useSettings();
   const { isDark } = useThemeMode();
   const { light: lightBrand, dark: darkBrand } = resolveBrandColors(effective);
   const themes = useMemo(() => buildThemes(lightBrand, darkBrand), [lightBrand, darkBrand]);
+  useThemeTransition(isDark);
 
   const theme = isDark ? themes.dark : themes.light;
   return (
@@ -91,11 +111,10 @@ function ThemedApp() {
                 <Route element={<RequireAuth roles={['teacher']} />}>
                   <Route path="/teacher/problems" element={<TeacherProblemList />} />
                   <Route path="/teacher/problems/:id" element={<TeacherProblemEdit />} />
+                  <Route path="/teacher/problems/:id/view" element={<TeacherProblemView />} />
                   <Route path="/teacher/assignments" element={<TeacherAssignmentList />} />
                   <Route path="/teacher/assignments/new" element={<TeacherAssignmentNew />} />
                   <Route path="/teacher/assignments/:id" element={<TeacherAssignmentOverview />} />
-                  <Route path="/teacher/assignments/:id/students" element={<TeacherAssignmentStudents />} />
-                  <Route path="/teacher/assignments/:id/students/:sid" element={<TeacherStudentScores />} />
                   <Route path="/teacher/students" element={<TeacherStudentList />} />
                   <Route path="/teacher/submissions/:sid" element={<TeacherSubmissionPage />} />
                 </Route>

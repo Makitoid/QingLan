@@ -62,7 +62,7 @@ import { useDangerStyles } from '../../components/dangerStyles';
 /** 搜索去抖：输入即打 `/teacher/students?q=`，但每 300ms 最多一次。 */
 const SEARCH_DEBOUNCE_MS = 300;
 
-/** 「按学生 ID 添加」的输入分隔符：半/全角逗号、分号、空白都认。 */
+/** 「添加临时学生」的输入分隔符：半/全角逗号、分号、空白都认。 */
 const ID_SEPARATOR = /[,，;；\s]+/;
 
 const columns: TableColumnDefinition<BoundStudentItem>[] = [
@@ -129,12 +129,12 @@ export function TeacherStudentList() {
   const [membersLoading, setMembersLoading] = useState(false);
   const [membersError, setMembersError] = useState<string | null>(null);
 
-  // 「按学生 ID 添加」
+  // 「添加临时学生」
   const [bindOpen, setBindOpen] = useState(false);
   const [idText, setIdText] = useState('');
   const [bindError, setBindError] = useState<string | null>(null);
 
-  // 「移出手动添加的学生」确认
+  // 「移出临时学生」确认
   const [unbindOpen, setUnbindOpen] = useState(false);
 
   const students = useMemo(() => data ?? [], [data]);
@@ -336,7 +336,6 @@ export function TeacherStudentList() {
     <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
       <PageHeader
         title="我的学生"
-        subtitle="名单由管理员分配给你的可教组别自动组成，也可以按学生 ID 补人；组别派生的学生如需移出，请找管理员撤销相应组别。子分组是你在名单之上自建的集合，发布场次时用它选择受众。"
         actions={
           <>
             <SearchBox
@@ -346,7 +345,7 @@ export function TeacherStudentList() {
               style={{ width: '220px' }}
             />
             <Button appearance="secondary" icon={<Add24Regular />} onClick={() => { setBindError(null); setBindOpen(true); }} disabled={busy}>
-              按学生 ID 添加
+              添加临时学生
             </Button>
           </>
         }
@@ -368,7 +367,7 @@ export function TeacherStudentList() {
         actions={[
           {
             key: 'unbind',
-            label: '移出手动添加',
+            label: '移出临时学生',
             icon: <ArrowExit24Regular />,
             danger: true,
             disabled: busy || selectedDerivedCount > 0,
@@ -381,7 +380,7 @@ export function TeacherStudentList() {
       {selectedDerivedCount > 0 && (
         <MessageBar intent="warning" style={{ borderRadius: tokens.borderRadiusMedium }}>
           <MessageBarBody>
-            {`选中的 ${selectedDerivedCount} 名学生来自你的可教组别，需由管理员撤销组别后才能离开名单，因此「移出手动添加」已置灰；请取消勾选这些学生后重试。`}
+            {`「移出临时学生」已置灰：选中的 ${selectedDerivedCount} 名学生来自可教组别，需管理员撤销组别才能移出，请取消勾选后重试。`}
           </MessageBarBody>
         </MessageBar>
       )}
@@ -412,7 +411,7 @@ export function TeacherStudentList() {
               <Spinner label="正在读取子分组…" />
             ) : subgroups.length === 0 ? (
               <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-                还没有子分组。可以按教学进度把名单分成若干组，发布场次时按组下发。
+                还没有子分组。
               </Caption1>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
@@ -470,14 +469,12 @@ export function TeacherStudentList() {
             )}
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalXS }}>
-              <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-                可教组别（只读，由管理员分配；其成员就是名单来源）
-              </Caption1>
+              <Text weight="semibold">可教组别</Text>
               {classLoading ? (
                 <Spinner size="tiny" />
               ) : classes.length === 0 ? (
                 <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-                  还没有可教组别，请联系管理员在「教师管理 → 可教组别」里分配。
+                  还没有可教组别，请联系管理员分配。
                 </Caption1>
               ) : (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: tokens.spacingHorizontalXS }}>
@@ -495,18 +492,18 @@ export function TeacherStudentList() {
         <Card size="medium" style={{ flex: '2 1 520px', minWidth: '320px' }}>
           <CardHeader header={<Text weight="semibold">{`名单（${students.length} 人）`}</Text>} />
           <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
-            <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-              {debouncedQ
-                ? `关键词「${debouncedQ}」在当前名单里匹配 ${students.length} 名学生（后端搜索，共多少条以清空搜索为准）。`
-                : '名单 = 可教组别成员 ∪ 按 ID 手动添加；「组别」列展示学生所属的行政班。'}
-            </Caption1>
+            {debouncedQ && (
+              <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                {`关键词「${debouncedQ}」匹配 ${students.length} 名学生。`}
+              </Caption1>
+            )}
 
             {students.length === 0 ? (
               <EmptyView
                 title={debouncedQ ? '没有匹配的学生' : '名单里还没有学生'}
                 description={debouncedQ
                   ? '换个关键词试试，或清空搜索框查看全部学生。'
-                  : '可教组别里的学生会自动出现在这里；组别还没分配给你时，可以先用「按学生 ID 添加」。'}
+                  : '可以先用「添加临时学生」补人。'}
                 action={debouncedQ
                   ? <Button appearance="secondary" size="small" onClick={() => setSearch('')}>清空搜索</Button>
                   : undefined}
@@ -548,7 +545,7 @@ export function TeacherStudentList() {
                           {columnId === 'source' && (
                             item.source === 'group'
                               ? <Badge appearance="outline" size="large">可教组别</Badge>
-                              : <Badge appearance="tint" size="large">手动添加</Badge>
+                              : <Badge appearance="tint" size="large">临时添加</Badge>
                           )}
                           {columnId === 'is_active' && (
                             item.is_active
@@ -573,9 +570,6 @@ export function TeacherStudentList() {
             <DialogTitle>{nameDialog?.mode === 'rename' ? '重命名子分组' : '新建子分组'}</DialogTitle>
             <DialogContent>
               <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
-                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-                  子分组只由你在名单之上维护，用于发布场次时选择受众；管理员分配的可教组别不受影响。
-                </Caption1>
                 <Field label="名称" required>
                   <Input
                     value={nameText}
@@ -648,10 +642,6 @@ export function TeacherStudentList() {
             <DialogTitle>{`子分组成员${membersTarget ? `：${membersTarget.name}` : ''}`}</DialogTitle>
             <DialogContent>
               <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
-                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-                  勾选要放进该子分组的学生，保存时按勾选结果整体覆盖；全部取消勾选即清空成员。只有当前名单里的学生可选。
-                </Caption1>
-
                 {membersError && (
                   <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
                     <MessageBarBody>{membersError}</MessageBarBody>
@@ -707,17 +697,15 @@ export function TeacherStudentList() {
         </DialogSurface>
       </Dialog>
 
-      {/* BD-04：转学生 / 旁听等暂不在可教组里的兜底入口。后端只回条数，不回明细。 */}
+      {/* BD-04：「添加临时学生」兜底入口（转学生 / 旁听生）。后端只回条数，不回明细。 */}
       <Dialog open={bindOpen} onOpenChange={(_, d) => { if (!busy) setBindOpen(d.open); }}>
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>按学生 ID 添加</DialogTitle>
+            <DialogTitle>添加临时学生</DialogTitle>
             <DialogContent>
               <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
                 <Caption1 style={{ color: t.colorNeutralForeground3 }}>
                   用于转学生、旁听生这类还不在你可教组别里的情况。
-                  这里要的是学生的系统 ID（一个纯数字，<b>不是学号</b>），来自管理员的「学生管理」列表里的学生 ID，需要的话请找管理员要。
-                  可以一次给多个，用逗号或空格分隔。
                 </Caption1>
                 <Field label="学生 ID" required>
                   <Input
@@ -755,21 +743,18 @@ export function TeacherStudentList() {
         </DialogSurface>
       </Dialog>
 
-      {/* BD-05 + 0.3.2 F1：只移手动添加的学生，历史提交与成绩保留 */}
+      {/* BD-05 + 0.4.0 F3：只移临时添加的学生，历史提交与成绩保留 */}
       <Dialog open={unbindOpen} onOpenChange={(_, d) => { if (!busy) setUnbindOpen(d.open); }}>
         <DialogSurface>
           <DialogBody>
-            <DialogTitle>移出手动添加的学生</DialogTitle>
+            <DialogTitle>移出临时学生</DialogTitle>
             <DialogContent>
               <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalS }}>
                 <Caption1>
-                  {`确定把选中的 ${selectedCount} 名学生移出我的名单？移出后你看不到他们的新提交，也不能再给他们放题。`}
+                  {`确定把选中的 ${selectedCount} 名临时学生移出名单？`}
                 </Caption1>
                 <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-                  学生账号本身、以及他们已有的提交与成绩都保留，仍在你的成绩页可见范围内；再按学生 ID 添加回来即可恢复。
-                </Caption1>
-                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-                  来自可教组别的学生不能在这里移出，需由管理员撤销相应组别。
+                  该生已有的提交与成绩仍保留。
                 </Caption1>
               </div>
             </DialogContent>

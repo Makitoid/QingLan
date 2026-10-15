@@ -14,6 +14,8 @@ import {
   DialogContent,
   DialogSurface,
   DialogTitle,
+  Field,
+  Input,
   Listbox,
   MessageBar,
   MessageBarBody,
@@ -26,6 +28,8 @@ import {
 } from '@fluentui/react-components';
 import { Add24Regular, Dismiss24Regular, Key24Regular, Save24Regular } from '@fluentui/react-icons';
 import {
+  adminBindTempStudents,
+  adminUnbindTempStudents,
   getTeacherGroups,
   getTeacherStudents,
   listGroups,
@@ -38,10 +42,14 @@ import { EmptyView, ErrorView, LoadingView, errMessage } from '../../components/
 import { PageHeader } from '../../components/PageHeader';
 import { CredentialDialog } from '../../components/CredentialDialog';
 
+/** 「添加临时学生」的输入分隔符：半/全角逗号、分号、空白都认（与教师端 StudentList 同款）。 */
+const ID_SEPARATOR = /[,，;；\s]+/;
+
 /**
- * 教师详情（BD-02 / BD-06 + 0.3.2 F1）：
+ * 教师详情（BD-02 / BD-06 + 0.3.2 F1 + 0.4.0 F3）：
  * ① 可教组别（层 2）——admin 唯一的任教安排入口：列出已分配组 + 「添加组」弹窗勾选，保存为全量替换；
- * ② 学生名单——口径是「可教组别成员并集 ∪ 手动添加」，矩阵呈现，撤销组别即刻移除该组学生；
+ * ② 学生名单——口径是「可教组别成员并集 ∪ 临时添加」，矩阵呈现，撤销组别即刻移除该组学生；
+ *    临时学生（层 3 手动绑定行）可在本页代加/代删；
  * ③ 重置密码——随机密码只在响应里给一次（PW-04 / PW-09）。
  */
 export function AdminTeacherDetail() {
@@ -67,6 +75,11 @@ export function AdminTeacherDetail() {
 
   const [roster, setRoster] = useState<RosterEntry[]>([]);
   const [rosterSearch, setRosterSearch] = useState('');
+
+  // 0.4.0 F3：代加临时学生（按学生 ID 输入）
+  const [bindOpen, setBindOpen] = useState(false);
+  const [bindText, setBindText] = useState('');
+  const [bindError, setBindError] = useState<string | null>(null);
 
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<{ intent: 'success' | 'warning' | 'error'; text: string } | null>(null);
@@ -171,6 +184,59 @@ export function AdminTeacherDetail() {
     try {
       const cred = await resetTeacherPassword(teacherId);
       setCredentials([cred]);
+    } catch (err) {
+      setMessage({ intent: 'error', text: errMessage(err) });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // ---------- 0.4.0 F3：代加 / 代删临时学生 ----------
+
+  const bindTokens = bindText.split(ID_SEPARATOR).map((x) => x.trim()).filter(Boolean);
+  const bindBadTokens = bindTokens.filter((x) => !/^\d+$/.test(x));
+  const bindIds = useMemo(
+    () => Array.from(new Set(bindTokens.filter((x) => /^\d+$/.test(x)).map(Number))).filter((n) => n > 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [bindText],
+  );
+
+  const refreshRoster = () => getTeacherStudents(teacherId)
+    .then((r) => setRoster(r.students))
+    .catch((e) => setMessage({ intent: 'error', text: errMessage(e) }));
+
+  const handleBindTemp = async () => {
+    if (bindIds.length === 0) return;
+    setBusy(true);
+    setBindError(null);
+    try {
+      const result = await adminBindTempStudents(teacherId, bindIds);
+      setBindOpen(false);
+      setBindText('');
+      setMessage(
+        result.success_count === bindIds.length
+          ? { intent: 'success', text: `已添加 ${result.success_count} 名临时学生。` }
+          : {
+            intent: 'success',
+            text: `已添加 ${result.success_count} 名，另有 ${bindIds.length - result.success_count} 个 ID 已在名单里（未重复添加）。`,
+          },
+      );
+      await refreshRoster();
+    } catch (err) {
+      setBindError(errMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleUnbindTemp = async (s: RosterEntry) => {
+    if (!window.confirm(`确定把「${s.display_name}」移出临时学生？其历史提交与成绩仍保留。`)) return;
+    setBusy(true);
+    setMessage(null);
+    try {
+      await adminUnbindTempStudents(teacherId, [s.id]);
+      setMessage({ intent: 'success', text: `已移出临时学生「${s.display_name}」。` });
+      await refreshRoster();
     } catch (err) {
       setMessage({ intent: 'error', text: errMessage(err) });
     } finally {
@@ -294,10 +360,19 @@ export function AdminTeacherDetail() {
               <Badge appearance="outline" size="large">{roster.length} 人</Badge>
             </span>
           }
+          action={(
+            <Button
+              appearance="secondary"
+              icon={<Add24Regular />}
+              disabled={busy}
+              onClick={() => { setBindError(null); setBindOpen(true); }}
+            >
+              添加临时学生
+            </Button>
+          )}
         />
         <Caption1 style={{ color: t.colorNeutralForeground3 }}>
-          名单 = 该教师可教组别里的全部学生 ∪ 手动按学号添加的学生；管理员撤销某组后，该组学生立即离开名单
-          （历史提交与成绩仍保留）。带角标的是手动添加的学生。
+          名单 = 可教组别成员 ∪ 临时添加；带角标的是临时添加的学生，可直接移出。
         </Caption1>
         <div style={{ marginTop: tokens.spacingVerticalS }}>
           <SearchBox placeholder="按学号或姓名筛选名单" value={rosterSearch} onChange={(_, d) => setRosterSearch(d.value)} style={{ maxWidth: '320px' }} />
@@ -313,7 +388,7 @@ export function AdminTeacherDetail() {
                 <Tooltip
                   key={s.id}
                   relationship="description"
-                  content={`学号：${s.username}　来源：${s.source === 'manual' ? '手动添加' : (s.group_names.join('、') || '可教组别')}`}
+                  content={`学号：${s.username}　来源：${s.source === 'manual' ? '临时添加' : (s.group_names.join('、') || '可教组别')}`}
                 >
                   <span
                     style={{
@@ -328,19 +403,32 @@ export function AdminTeacherDetail() {
                   >
                     <Text size={200}>{`${s.display_name}(ID:${String(s.id).padStart(2, '0')})`}</Text>
                     {s.source === 'manual' && (
-                      <span
-                        aria-hidden
-                        style={{
-                          position: 'absolute',
-                          top: 0,
-                          right: 0,
-                          width: '8px',
-                          height: '8px',
-                          borderRadius: '50%',
-                          backgroundColor: t.colorBrandBackground2,
-                          transform: 'translate(25%, -25%)',
-                        }}
-                      />
+                      <>
+                        <span
+                          aria-hidden
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            right: 0,
+                            width: '8px',
+                            height: '8px',
+                            borderRadius: '50%',
+                            backgroundColor: t.colorBrandBackground2,
+                            transform: 'translate(25%, -25%)',
+                          }}
+                        />
+                        <Tooltip content="移出临时学生" relationship="label">
+                          <Button
+                            size="small"
+                            appearance="subtle"
+                            icon={<Dismiss24Regular />}
+                            aria-label={`移出临时学生 ${s.display_name}`}
+                            disabled={busy}
+                            style={{ marginLeft: tokens.spacingHorizontalXS, color: t.colorNeutralForeground3 }}
+                            onClick={() => void handleUnbindTemp(s)}
+                          />
+                        </Tooltip>
+                      </>
                     )}
                   </span>
                 </Tooltip>
@@ -418,6 +506,52 @@ export function AdminTeacherDetail() {
                 onClick={confirmPicker}
               >
                 确认添加
+              </Button>
+            </DialogActions>
+          </DialogBody>
+        </DialogSurface>
+      </Dialog>
+
+      {/* 0.4.0 F3：代加临时学生——同款按 ID 输入弹窗；无效 id 整批 422，后端不回明细 */}
+      <Dialog open={bindOpen} onOpenChange={(_, d) => { if (!busy) setBindOpen(d.open); }}>
+        <DialogSurface>
+          <DialogBody>
+            <DialogTitle>添加临时学生</DialogTitle>
+            <DialogContent>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: tokens.spacingVerticalM }}>
+                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                  用于转学生、旁听生这类还不在该教师可教组别里的情况。
+                </Caption1>
+                <Field label="学生 ID" required>
+                  <Input
+                    value={bindText}
+                    onChange={(_, d) => setBindText(d.value)}
+                    placeholder="例如：12, 34 56"
+                    autoFocus
+                  />
+                </Field>
+                <Caption1 style={{ color: t.colorNeutralForeground3 }}>
+                  {bindIds.length > 0
+                    ? `识别到 ${bindIds.length} 个学生 ID。`
+                    : '还没有识别到有效的数字 ID。'}
+                  {bindBadTokens.length > 0 && ` 其中「${bindBadTokens.join('、')}」不是数字 ID，会被忽略。`}
+                </Caption1>
+                {bindError && (
+                  <MessageBar intent="error" style={{ borderRadius: tokens.borderRadiusMedium }}>
+                    <MessageBarBody>{bindError}</MessageBarBody>
+                  </MessageBar>
+                )}
+              </div>
+            </DialogContent>
+            <DialogActions>
+              <Button appearance="secondary" onClick={() => setBindOpen(false)} disabled={busy}>取消</Button>
+              <Button
+                appearance="primary"
+                icon={<Add24Regular />}
+                disabled={busy || bindIds.length === 0}
+                onClick={() => void handleBindTemp()}
+              >
+                {busy ? '添加中…' : `确认添加${bindIds.length > 0 ? `（${bindIds.length} 个 ID）` : ''}`}
               </Button>
             </DialogActions>
           </DialogBody>

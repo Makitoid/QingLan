@@ -47,12 +47,20 @@ AUDIT_ACTION_LABELS: dict[str, str] = {
     "teacher_group_assign": "教师可教组别分配",
     "teacher_student_bind": "教师拉入学生",
     "teacher_student_unbind": "教师移出学生",
+    "admin_student_bind": "管理员添加临时学生",
+    "admin_student_unbind": "管理员移出临时学生",
     "subgroup_create": "新建子分组",
     "subgroup_update": "子分组改名",
     "subgroup_delete": "删除子分组",
     "subgroup_member_change": "子分组名单变更",
     "student_import": "批量导入学生",
+    "teacher_import": "批量导入教师",
     "score_manual_adjust": "成绩手动调分",
+    "problem_batch_group": "题目批量分组",
+    "problem_batch_delete": "题目批量删除",
+    "assignment_remind": "提醒学生交作业",
+    "assignment_retry": "打回重做",
+    "assignment_retry_cancel": "撤销打回重做",
 }
 
 AUDIT_TARGET_LABELS: dict[str, str] = {

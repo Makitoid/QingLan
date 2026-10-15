@@ -126,6 +126,42 @@ class TeacherNoticeOut(BaseModel):
     created_at: str
 
 
+# ---------- 提醒交作业（0.4.1 F6）----------
+
+class RemindRequest(BaseModel):
+    student_ids: list[int]
+
+
+class RemindResultOut(BaseModel):
+    """新建的提醒条数；skipped = 该场次下已有未读提醒、本次不重复弹的人数。"""
+    created: int
+    skipped: int
+
+
+class StudentReminderOut(BaseModel):
+    id: int
+    assignment_id: int
+    assignment_title: str
+    assignment_mode: str
+    end_time: str
+    teacher_name: str
+    created_at: str
+
+
+# ---------- 打回重做（0.4.1 F9）----------
+
+class RetryRequest(BaseModel):
+    """student_ids 为空 = 由服务端按及格线自动挑不及格学生。"""
+    student_ids: list[int] = []
+    deadline: str
+
+
+class RetryResultOut(BaseModel):
+    created: int
+    updated: int
+    student_ids: list[int]
+
+
 class GroupOut(ORMModel):
     id: int
     name: str
@@ -216,6 +252,18 @@ class AuditLogPageOut(BaseModel):
     total: int
 
 
+class LabelOptionOut(BaseModel):
+    """筛选下拉的一个候选项：value 给接口用，label 给人看。"""
+    value: str
+    label: str
+
+
+class AuditLogFiltersOut(BaseModel):
+    """审计日志筛选候选：字典顺序即下拉展示顺序（按业务分组，不按字母排）。"""
+    actions: list[LabelOptionOut]
+    targets: list[LabelOptionOut]
+
+
 class BatchActiveRequest(BaseModel):
     student_ids: list[int]
     is_active: bool
@@ -290,6 +338,14 @@ class ProblemUpdate(BaseModel):
     compare_mode: str | None = None
     float_eps: float | None = None
     group_name: str | None = None
+
+
+class ProblemBatchRequest(BaseModel):
+    problem_ids: list[int]
+
+
+class ProblemBatchGroupRequest(ProblemBatchRequest):
+    group_name: str = Field(max_length=50)
 
 
 class ProblemDraft(BaseModel):
@@ -374,6 +430,8 @@ class AssignmentCreate(BaseModel):
     # 0.3.2 F1 发布受众：'all' = 全部名单（缺省，与老行为一致）；'subgroup' 须给出 subgroup_ids
     audience_mode: Literal["all", "subgroup"] = "all"
     subgroup_ids: list[int] = []
+    # 0.4.1 F9：及格线，必须落在 [0, 题单满分]，由接口在写库前校验
+    pass_score: float | None = Field(default=None, ge=0)
     problems: list[AssignmentProblemIn] = Field(min_length=1)
 
 
@@ -385,6 +443,8 @@ class AssignmentUpdate(BaseModel):
     score_policy: str | None = None
     audience_mode: Literal["all", "subgroup"] | None = None
     subgroup_ids: list[int] | None = None
+    # 显式传 null 才清空及格线；不传 = 不改（与其余字段同一套 model_fields_set 语义）
+    pass_score: float | None = Field(default=None, ge=0)
     problems: list[AssignmentProblemIn] | None = None
 
 
@@ -408,6 +468,8 @@ class AssignmentOut(ORMModel):
     # 0.3.2 F1：受众模式与子分组白名单（'all' 时恒为空数组，老数据行为不变）
     audience_mode: str = "all"
     subgroup_ids: list[int] = []
+    # 0.4.1 F9：及格线（绝对分）；None = 本场不判及格
+    pass_score: float | None = None
     created_by: int
     created_at: str
     problems: list[AssignmentProblemOut] = []
@@ -473,6 +535,13 @@ class OverviewOut(BaseModel):
     submitted_students: int
     per_problem: list[PerProblemStat]
     histogram: list[HistogramBin]
+    # 0.4.0 F4：班级总分指标（总分口径同 student_rows.total_score，未交学生按 0 计入）。
+    # 均带默认值，旧客户端与既有断言不受影响。
+    avg_total_score: float = 0.0
+    pass_rate: float = 0.0
+    max_total_score: float | None = None
+    min_total_score: float | None = None
+    full_score_sum: float = 0.0
 
 
 class StudentProblemScoreOut(BaseModel):
@@ -480,7 +549,7 @@ class StudentProblemScoreOut(BaseModel):
 
     F6 起 `StudentRowOut.problem_scores` 仍只填前 5 个字段（默认值兜底），
     逐学生按题调分端点则额外填 submission_count / latest_submission_id /
-    score / manual_score —— 三者取自该题**最新一条**提交，effective_score 取自
+    verdict / score / manual_score —— 四者取自该题**最新一条**提交，effective_score 取自
     aggregate_scores 全量口径，两者口径不同故并列输出。
     """
 
@@ -491,6 +560,7 @@ class StudentProblemScoreOut(BaseModel):
     effective_score: float | None = None
     submission_count: int = 0
     latest_submission_id: int | None = None
+    verdict: str | None = None
     score: float | None = None
     manual_score: float | None = None
 
@@ -506,6 +576,8 @@ class StudentRowOut(BaseModel):
     problem_scores: list[StudentProblemScoreOut] = []
     last_submitted_at: str | None = None
     last_submission_id: int | None = None
+    # 0.4.1 F9：该生在本场次的重做期限，没被打回为 null
+    retry_deadline: str | None = None
 
 
 class MyProblemScore(BaseModel):
@@ -525,8 +597,12 @@ class StudentAssignmentOut(BaseModel):
     max_submissions: int | None
     score_policy: str
     released: int
-    state: Literal["ongoing", "ending", "ended"]
+    # 'retry' = 原窗口已过但该生被打了回、仍在重做期限内（0.4.1 F9）
+    state: Literal["ongoing", "ending", "ended", "retry"]
     my_scores: list[MyProblemScore] = []
+    # 0.4.1 F9：及格线与该生的重做期限（UTC 串），无则 null
+    pass_score: float | None = None
+    retry_deadline: str | None = None
 
 
 class SampleCaseOut(BaseModel):

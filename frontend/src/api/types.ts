@@ -179,6 +179,17 @@ export interface AuditLogPage {
   total: number;
 }
 
+/** 筛选下拉候选项：value 是接口参数，label 是中文名。 */
+export interface LabelOption {
+  value: string;
+  label: string;
+}
+
+export interface AuditLogFilters {
+  actions: LabelOption[];
+  targets: LabelOption[];
+}
+
 /* ---------- admin ---------- */
 
 export interface TeacherItem {
@@ -366,6 +377,8 @@ export interface AssignmentSummary {
   released: boolean;
   released_at: string | null;
   created_at: string;
+  /** 0.4.1 F9：及格线（绝对分），null = 本场不判及格。 */
+  pass_score: number | null;
 }
 
 export interface AssignmentDetail extends AssignmentSummary {
@@ -383,6 +396,8 @@ export interface AssignmentBody {
   audience_mode: AudienceMode;
   /** 受众子分组白名单；`audience_mode='all'` 时上送空数组。 */
   subgroup_ids: number[];
+  /** 0.4.1 F9：及格线，必须 ≤ 本场满分；null = 不设。 */
+  pass_score: number | null;
   problems: AssignmentProblemRef[];
 }
 
@@ -404,6 +419,16 @@ export interface AssignmentOverview {
   submitted_students: number;
   per_problem: OverviewPerProblem[];
   histogram: HistogramBucket[];
+  /**
+   * 0.4.0 F4：班级总分指标。总分 = 题单内每题有效分之和（未交按 0 计），
+   * 与 `AssignmentStudentRow.total_score` 同一口径；及格线 = `full_score_sum * 0.6`。
+   * 受众为空时 avg/pass_rate 为 0，max/min 为 null。
+   */
+  avg_total_score?: number;
+  pass_rate?: number;
+  max_total_score?: number | null;
+  min_total_score?: number | null;
+  full_score_sum?: number;
 }
 
 /** SC-01：场次成绩行里「每题的有效分」（未提交为 null）。 */
@@ -427,6 +452,8 @@ export interface StudentProblemScoreRow {
   full_score: number;
   submission_count: number;
   latest_submission_id: number | null;
+  /** 0.4.0 F5：最新一条提交的判定；无提交为 null。pending 时后端 verdict 仍为 NULL。 */
+  verdict?: Verdict | null;
   score: number | null;
   manual_score: number | null;
   effective_score: number | null;
@@ -449,6 +476,8 @@ export interface AssignmentStudentRow {
   problem_scores: AssignmentProblemScore[];
   last_submitted_at: string | null;
   last_submission_id?: number | null;
+  /** 0.4.1 F9：该生在本场次的重做期限，未被打回为 null。 */
+  retry_deadline?: string | null;
 }
 
 /* ---------- submissions ---------- */
@@ -482,7 +511,7 @@ export interface TeacherSubmissionDetail {
 
 /* ---------- student ---------- */
 
-export type AssignmentState = 'ongoing' | 'ending' | 'ended';
+export type AssignmentState = 'ongoing' | 'ending' | 'ended' | 'retry';
 
 export interface StudentAssignmentItem {
   id: number;
@@ -495,6 +524,9 @@ export interface StudentAssignmentItem {
   released: boolean;
   state: AssignmentState;
   my_scores: StudentScoreRow[];
+  /** 0.4.1 F9：及格线与自己是否被打回重做（state='retry' 时 deadline 非空）。 */
+  pass_score: number | null;
+  retry_deadline: string | null;
 }
 
 export interface StudentScoreRow {
@@ -519,6 +551,9 @@ export interface StudentAssignmentDetail {
   released: boolean;
   state: AssignmentState;
   my_scores: StudentScoreRow[];
+  /** 0.4.1 F9：及格线与自己是否被打回重做（state='retry' 时 deadline 非空）。 */
+  pass_score: number | null;
+  retry_deadline: string | null;
 }
 
 export interface SampleCase {
@@ -577,4 +612,32 @@ export interface StudentSubmissionDetail {
 
 export interface CreateSubmissionResponse {
   id: number;
+}
+
+/* ---------- 提醒交作业（0.4.1 F6） ---------- */
+
+/** 学生的一条未读提醒；后端只下发未读，看过并确认后不再出现。 */
+export interface StudentReminderItem {
+  id: number;
+  assignment_id: number;
+  assignment_title: string;
+  /** homework / test，与学生端场次列表同一口径。 */
+  assignment_mode: string;
+  /** UTC 串，弹窗里按本地时区展示。 */
+  end_time: string;
+  teacher_name: string;
+  created_at: string;
+}
+
+export interface RetryResult {
+  created: number;
+  updated: number;
+  student_ids: number[];
+}
+
+export interface RemindResult {
+  /** 新建的提醒条数 */
+  created: number;
+  /** 该场次下已有未读提醒、本次不重复弹的人数 */
+  skipped: number;
 }

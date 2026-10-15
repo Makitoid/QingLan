@@ -20,7 +20,7 @@ import {
 
   type TableColumnDefinition,
 } from '@fluentui/react-components';
-import { ArrowTrending24Regular, People24Regular, Send24Regular } from '@fluentui/react-icons';
+import { ArrowDown24Regular, ArrowTrending24Regular, ArrowUp24Regular, CheckmarkStarburst24Regular, CoinStack24Regular, People24Regular, Send24Regular } from '@fluentui/react-icons';
 import { getAssignmentOverview, getTeacherAssignment, releaseAssignment } from '../../api';
 import type { AssignmentDetail, AssignmentOverview, OverviewPerProblem } from '../../api/types';
 import { useAsync } from '../../components/useAsync';
@@ -28,6 +28,7 @@ import { LoadingView, ErrorView, EmptyView, errMessage } from '../../components/
 import { fmtTime } from '../../components/time';
 import { fmtScore } from '../../components/score';
 import { ScoreHistogram } from '../../components/ScoreHistogram';
+import { AssignmentStudentsTable } from '../../components/AssignmentStudentsTable';
 import { PageHeader } from '../../components/PageHeader';
 
 const columns: TableColumnDefinition<OverviewPerProblem>[] = [
@@ -124,15 +125,24 @@ export function TeacherAssignmentOverview() {
         />
       </div>
 
+      <div style={{ display: 'flex', gap: tokens.spacingHorizontalM }}>
+        <StatCard label="班级总分平均" value={fmtScore(o.avg_total_score ?? 0)} icon={<CoinStack24Regular />} />
+        <StatCard label="及格率" value={`${Math.round((o.pass_rate ?? 0) * 100)}%`} icon={<CheckmarkStarburst24Regular />} />
+        <StatCard label="班级总分最高" value={fmtScore(o.max_total_score)} icon={<ArrowUp24Regular />} />
+        <StatCard label="班级总分最低" value={fmtScore(o.min_total_score)} icon={<ArrowDown24Regular />} />
+      </div>
+
       <Card size="medium">
-        <CardHeader
-          header={<Text weight="semibold">每题统计</Text>}
-          action={
-            <Button size="small" appearance="secondary" onClick={() => navigate(`/teacher/assignments/${assignmentId}/students`)}>
-              逐学生成绩 →
-            </Button>
-          }
-        />
+        <CardHeader header={<Text weight="semibold">分数分布</Text>} />
+        {o.histogram.length === 0 ? (
+          <EmptyView title="暂无分数数据" description="还没有已判分的提交。" />
+        ) : (
+          <ScoreHistogram data={o.histogram} />
+        )}
+      </Card>
+
+      <Card size="medium">
+        <CardHeader header={<Text weight="semibold">每题统计</Text>} />
         {o.per_problem.length === 0 ? (
           <EmptyView title="暂无题目数据" />
         ) : (
@@ -148,7 +158,10 @@ export function TeacherAssignmentOverview() {
                   {({ columnId }) => (
                     <DataGridCell>
                       {columnId === 'title' && (
-                        <Link to={`/teacher/problems/${item.problem_id}`} style={{ color: t.colorBrandForeground1 }}>
+                        <Link
+                          to={`/teacher/problems/${item.problem_id}/view?from=${encodeURIComponent(`/teacher/assignments/${assignmentId}`)}`}
+                          style={{ color: t.colorBrandForeground1 }}
+                        >
                           {item.title}
                         </Link>
                       )}
@@ -165,12 +178,7 @@ export function TeacherAssignmentOverview() {
       </Card>
 
       <Card size="medium">
-        <CardHeader header={<Text weight="semibold">分数分布</Text>} />
-        {o.histogram.length === 0 ? (
-          <EmptyView title="暂无分数数据" description="还没有已判分的提交。" />
-        ) : (
-          <ScoreHistogram data={o.histogram} />
-        )}
+        <AssignmentStudentsTable assignmentId={assignmentId} passScore={a.pass_score} endTime={a.end_time} />
       </Card>
     </div>
   );

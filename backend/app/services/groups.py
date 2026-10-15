@@ -18,6 +18,7 @@ from ..models import (Assignment, AssignmentSubgroup, Group, GroupMember,
                       TeacherGroup, TeacherStudent, TeacherSubgroup,
                       TeacherSubgroupMember, User)
 from ..schemas import GroupRef
+from .audit import log_audit
 
 MAX_GROUP_NAME_LEN = 50
 
@@ -264,6 +265,25 @@ def teachable_group_names_by_student(db: Session, teacher_id: int) -> dict[int, 
     return result
 
 
+def group_names_by_teacher(db: Session, teacher_ids: list[int]) -> dict[int, list[str]]:
+    """{teacher_id: [可教组名]}，按组名排序（0.4.1 教师名单导出用）。"""
+    ids = sorted(dict.fromkeys(teacher_ids))
+    if not ids:
+        return {}
+    rows = db.execute(
+        select(TeacherGroup.teacher_id, Group.name)
+        .join(Group, Group.id == TeacherGroup.group_id)
+        .where(TeacherGroup.teacher_id.in_(ids))
+        .order_by(Group.name, Group.id)
+    ).all()
+    result: dict[int, list[str]] = {}
+    for teacher_id, name in rows:
+        names = result.setdefault(teacher_id, [])
+        if name not in names:
+            names.append(name)
+    return result
+
+
 def student_ids_in_groups(db: Session, group_ids: list[int]) -> dict[int, set[int]]:
     """{group_id: {student_id}}（只含 role=student），组别撤销时的差集统计用。"""
     ids = sorted(dict.fromkeys(group_ids))
@@ -285,6 +305,33 @@ def manual_student_ids(db: Session, teacher_id: int) -> set[int]:
     return set(db.execute(
         select(TeacherStudent.student_id).where(TeacherStudent.teacher_id == teacher_id)
     ).scalars().all())
+
+
+def requested_student_ids(raw: list[int]) -> list[int]:
+    """去重保序；空选择在写库之前就拦下（teacher/admin 学生批量接口共用范式）。"""
+    ids = list(dict.fromkeys(raw))
+    if not ids:
+        raise APIError(422, "EMPTY_SELECTION", "未选择任何学生")
+    return ids
+
+
+def bind_manual_students(db: Session, teacher_id: int, student_ids: list[int],
+                         actor: User, source: str,
+                         action: str = "teacher_student_bind") -> int:
+    """幂等拉入层 3（`teacher_students`）并写审计（0.4.0 F3 起 teacher/admin 端点共用）。
+
+    行为与原 api/teacher.py::_bind_students 一致：只插缺失项、审计与写操作同事务、
+    由本函数 commit。权限与学生校验由调用方在写库之前完成，保证「先校验后写入」
+    的单事务语义。`action` 只有审计动作名不同（教师 self-bind / admin 代加）。
+    """
+    existing = manual_student_ids(db, teacher_id)
+    added = [sid for sid in student_ids if sid not in existing]
+    for sid in added:
+        db.add(TeacherStudent(teacher_id=teacher_id, student_id=sid))
+    log_audit(db, actor, action, "teacher", teacher_id,
+              {"count": len(added), "student_ids": added, "source": source})
+    db.commit()
+    return len(added)
 
 
 def roster_count_by_teacher(db: Session) -> dict[int, int]:

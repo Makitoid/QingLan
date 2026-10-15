@@ -177,7 +177,6 @@ export function TeacherAssignmentList() {
                         <MenuPopover>
                           <MenuList>
                             <MenuItem onClick={() => navigate(`/teacher/assignments/${item.id}`)}>总览与统计</MenuItem>
-                            <MenuItem onClick={() => navigate(`/teacher/assignments/${item.id}/students`)}>逐学生成绩</MenuItem>
                             {item.mode === 'test' && !item.released && (
                               <MenuItem onClick={() => void handleRelease(item)}>放出考试结果</MenuItem>
                             )}

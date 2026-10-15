@@ -9,12 +9,13 @@ from sqlalchemy.orm import Session
 from .. import schemas
 from ..core.db import get_db
 from ..core.security import APIError, require_teacher, utcnow_str
-from ..models import (Assignment, AssignmentProblem, Group, GroupMember,
-                      Problem, Submission, SubmissionResult, TeacherGroup,
-                      TeacherNotice, TeacherStudent, TeacherSubgroup,
-                      TeacherSubgroupMember, TestCase, User)
+from ..models import (Assignment, AssignmentProblem, AssignmentRetry, Group,
+                      GroupMember, Problem, StudentReminder, Submission,
+                      SubmissionResult, TeacherGroup, TeacherNotice, TeacherStudent,
+                      TeacherSubgroup, TeacherSubgroupMember, TestCase, User)
 from ..services import export as export_svc
 from ..services import groups as groups_svc
+from ..services import retries as retries_svc
 from ..services import scoring
 from ..services import stats, visibility
 from ..services.audit import log_audit
@@ -39,6 +40,14 @@ def _get_owned_problem(db: Session, teacher: User, problem_id: int) -> Problem:
     if problem.created_by != teacher.id:
         raise APIError(403, "FORBIDDEN", "无权操作他人的题目")
     return problem
+
+
+def _requested_problem_ids(raw: list[int]) -> list[int]:
+    """去重保序；空选择在写库之前就拦下（与 _requested_student_ids 同范式）。"""
+    ids = list(dict.fromkeys(raw))
+    if not ids:
+        raise APIError(422, "EMPTY_SELECTION", "未选择任何题目")
+    return ids
 
 
 def _get_owned_assignment(db: Session, teacher: User, assignment_id: int) -> Assignment:
@@ -94,6 +103,23 @@ def _validate_window(start_time: str, end_time: str):
         raise APIError(422, "VALIDATION_ERROR", "结束时间必须晚于开始时间")
 
 
+def _validate_pass_score(pass_score: float | None, full_total: float) -> None:
+    """及格线必须落在 [0, 本场满分]，否则要么永不及格要么永不及格不了。"""
+    if pass_score is None:
+        return
+    if pass_score > full_total:
+        raise APIError(422, "PASS_SCORE_OUT_OF_RANGE",
+                       f"及格线 {pass_score} 不能超过本场满分 {full_total}")
+
+
+def _full_total(db: Session, assignment_id: int,
+                items: list[schemas.AssignmentProblemIn] | None = None) -> float:
+    """本场满分：改了题单就用新题单，否则用库里已存的题单。"""
+    if items is not None:
+        return float(sum(item.full_score for item in items))
+    return float(sum(ap.full_score for ap in stats.assignment_problems_ordered(db, assignment_id)))
+
+
 def _resolve_audience(db: Session, teacher: User, mode: str,
                       subgroup_ids: list[int]) -> tuple[str, list[int]]:
     """发布受众入参校验：'all' 忽略 subgroup_ids；'subgroup' 须全属该教师（否则整批 422）。"""
@@ -124,6 +150,7 @@ def _assignment_out(db: Session, assignment: Assignment) -> dict:
         "released_at": assignment.released_at,
         "audience_mode": assignment.audience_mode or "all",
         "subgroup_ids": groups_svc.assignment_subgroup_ids(db, assignment.id),
+        "pass_score": assignment.pass_score,
         "created_by": assignment.created_by,
         "created_at": assignment.created_at,
         "problems": problems,
@@ -166,6 +193,54 @@ def create_problem(body: schemas.ProblemCreate,
     db.commit()
     db.refresh(problem)
     return problem
+
+
+@router.post("/problems/batch_group", response_model=schemas.GroupMembershipOut)
+def batch_group_problems(body: schemas.ProblemBatchGroupRequest,
+                         db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """0.4.0 F1：批量设置题目分组（自由文本，整批写入 strip 后的组名）。
+
+    沿用全仓批量范式：先去重、再逐题归属校验，任一题不存在或不属于本人
+    → 整批拒绝且不写库；审计与写入同事务。
+    """
+    problem_ids = _requested_problem_ids(body.problem_ids)
+    problems = [_get_owned_problem(db, teacher, pid) for pid in problem_ids]
+    name = (body.group_name or "").strip()
+    if not name:
+        raise APIError(422, "VALIDATION_ERROR", "分组名不能为空")
+    for problem in problems:
+        problem.group_name = name
+    log_audit(db, teacher, "problem_batch_group", "problem", None,
+              {"problem_ids": problem_ids, "group_name": name})
+    db.commit()
+    return schemas.GroupMembershipOut(success_count=len(problems))
+
+
+@router.post("/problems/batch_delete", response_model=schemas.GroupMembershipOut)
+def batch_delete_problems(body: schemas.ProblemBatchRequest,
+                          db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """0.4.0 F1：批量删除题目；题面与测试用例随单删同样级联删除（FK ondelete=CASCADE）。
+
+    只要批次里任一题被场次引用 → 整批 409 PROBLEM_IN_USE 并在 message 里列出
+    被引用题名（超过 3 个列前 3 个加「等 N 道」），一题都不删。
+    """
+    problem_ids = _requested_problem_ids(body.problem_ids)
+    problems = [_get_owned_problem(db, teacher, pid) for pid in problem_ids]
+    in_use = set(db.execute(
+        select(AssignmentProblem.problem_id).where(AssignmentProblem.problem_id.in_(problem_ids))
+    ).scalars().all())
+    blocked = [p.title for p in problems if p.id in in_use]
+    if blocked:
+        titles = "、".join(f"「{title}」" for title in blocked[:3])
+        suffix = f" 等 {len(blocked)} 道" if len(blocked) > 3 else ""
+        raise APIError(409, "PROBLEM_IN_USE",
+                       f"题目 {titles}{suffix} 已被场次引用，无法删除，操作已整批取消")
+    for problem in problems:
+        db.delete(problem)
+    log_audit(db, teacher, "problem_batch_delete", "problem", None,
+              {"problem_ids": problem_ids})
+    db.commit()
+    return schemas.GroupMembershipOut(success_count=len(problems))
 
 
 @router.get("/problems/{problem_id}", response_model=schemas.ProblemDetailOut)
@@ -303,6 +378,7 @@ def create_assignment(body: schemas.AssignmentCreate,
                       db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
     _validate_window(body.start_time, body.end_time)
     _validate_assignment_problems(db, teacher, body.problems)
+    _validate_pass_score(body.pass_score, float(sum(item.full_score for item in body.problems)))
     audience_mode, subgroup_ids = _resolve_audience(
         db, teacher, body.audience_mode, body.subgroup_ids
     )
@@ -314,6 +390,7 @@ def create_assignment(body: schemas.AssignmentCreate,
         max_submissions=body.max_submissions,
         score_policy=body.score_policy,
         audience_mode=audience_mode,
+        pass_score=body.pass_score,
         created_by=teacher.id,
     )
     db.add(assignment)
@@ -345,6 +422,7 @@ def update_assignment(assignment_id: int, body: schemas.AssignmentUpdate,
     if utcnow_str() >= assignment.start_time:
         raise APIError(409, "ALREADY_STARTED", "场次已开始，不可修改")
     changes = body.model_dump(exclude_unset=True)
+    items: list[schemas.AssignmentProblemIn] | None = None
     if "problems" in changes:
         has_submissions = db.scalar(
             select(Submission.id).where(Submission.assignment_id == assignment.id)
@@ -370,6 +448,8 @@ def update_assignment(assignment_id: int, body: schemas.AssignmentUpdate,
     merged_start = changes.get("start_time", assignment.start_time)
     merged_end = changes.get("end_time", assignment.end_time)
     _validate_window(merged_start, merged_end)
+    if "pass_score" in changes:
+        _validate_pass_score(changes["pass_score"], _full_total(db, assignment.id, items))
     for field, value in changes.items():
         setattr(assignment, field, value)
     if audience is not None:
@@ -457,6 +537,7 @@ def assignment_student_problems(assignment_id: int, student_id: int,
             "full_score": ap.full_score,
             "submission_count": len(subs),
             "latest_submission_id": latest.id if latest else None,
+            "verdict": latest.verdict if latest else None,
             "score": latest.score if latest else None,
             "manual_score": latest.manual_score if latest else None,
             "effective_score": scoring.aggregate_scores(subs, assignment.score_policy),
@@ -473,6 +554,101 @@ def export_assignment_students(assignment_id: int, tz_offset: int = 0,
     payload = export_svc.build_assignment_students_xlsx(assignment.title, rows, tz_offset)
     headers = export_svc.attachment_headers(f"{assignment.title}_成绩.xlsx")
     return StreamingResponse(iter([payload]), media_type=export_svc.XLSX_MEDIA_TYPE, headers=headers)
+
+
+@router.post("/assignments/{assignment_id}/remind", response_model=schemas.RemindResultOut)
+def remind_assignment_students(assignment_id: int, body: schemas.RemindRequest,
+                               db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """提醒学生交作业（0.4.1 F6）：单点或批量都走这里，学生下次登录时弹窗。
+
+    受众限定为本场次的学生（``audience_students`` 与题单可见性同一口径），
+    教师不能借提醒骚扰不在名单里的学生。同一 (场次, 学生) 已有未读提醒时
+    不重复插行，返回 skipped 条数。
+    """
+    assignment = _get_owned_assignment(db, teacher, assignment_id)
+    ids = groups_svc.requested_student_ids(body.student_ids)
+    audience = {s.id for s in groups_svc.audience_students(db, assignment)}
+    if set(ids) - audience:
+        raise APIError(422, "INVALID_STUDENT_IDS", "存在不在本场次受众里的学生")
+
+    pending = set(db.execute(
+        select(StudentReminder.student_id)
+        .where(StudentReminder.assignment_id == assignment.id,
+               StudentReminder.student_id.in_(ids),
+               StudentReminder.read_at.is_(None))
+    ).scalars().all())
+    created = 0
+    for student_id in ids:
+        if student_id in pending:
+            continue
+        db.add(StudentReminder(assignment_id=assignment.id, teacher_id=teacher.id,
+                               student_id=student_id))
+        created += 1
+    log_audit(db, teacher, "assignment_remind", "assignment", assignment.id,
+              {"count": created, "skipped": len(ids) - created, "student_ids": ids})
+    db.commit()
+    return schemas.RemindResultOut(created=created, skipped=len(ids) - created)
+
+
+@router.post("/assignments/{assignment_id}/retry", response_model=schemas.RetryResultOut)
+def retry_assignment(assignment_id: int, body: schemas.RetryRequest,
+                     db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """打回重做（0.4.1 F9）：把学生的提交窗口延长到 ``deadline``，期内不限次数。
+
+    ``student_ids`` 留空 = 服务端按及格线自动挑不及格的人（「一键全部打回」）。
+    及格线没设时这一条路走不通，直接 422，免得悄悄打回全员。
+    """
+    assignment = _get_owned_assignment(db, teacher, assignment_id)
+    if body.deadline <= assignment.end_time:
+        raise APIError(422, "RETRY_DEADLINE_TOO_EARLY", "重做期限必须晚于场次结束时间")
+
+    ids = body.student_ids
+    if not ids:
+        if assignment.pass_score is None:
+            raise APIError(422, "PASS_SCORE_MISSING", "未设及格线，请勾选学生或先设定及格线")
+        ids = retries_svc.failed_student_ids(stats.student_rows(db, assignment), assignment.pass_score)
+    ids = groups_svc.requested_student_ids(ids)
+
+    audience = {s.id for s in groups_svc.audience_students(db, assignment)}
+    if set(ids) - audience:
+        raise APIError(422, "INVALID_STUDENT_IDS", "存在不在本场次受众里的学生")
+
+    existing = {
+        row.student_id: row
+        for row in db.execute(
+            select(AssignmentRetry).where(AssignmentRetry.assignment_id == assignment.id,
+                                          AssignmentRetry.student_id.in_(ids))
+        ).scalars()
+    }
+    created = 0
+    for student_id in ids:
+        row = existing.get(student_id)
+        if row is None:
+            db.add(AssignmentRetry(assignment_id=assignment.id, student_id=student_id,
+                                   deadline=body.deadline, created_by=teacher.id))
+            created += 1
+        else:
+            row.deadline = body.deadline
+    log_audit(db, teacher, "assignment_retry", "assignment", assignment.id,
+              {"count": created, "updated": len(ids) - created,
+               "deadline": body.deadline, "student_ids": ids})
+    db.commit()
+    return schemas.RetryResultOut(created=created, updated=len(ids) - created, student_ids=ids)
+
+
+@router.delete("/assignments/{assignment_id}/retry/{student_id}")
+def cancel_assignment_retry(assignment_id: int, student_id: int,
+                            db: Session = Depends(get_db), teacher: User = Depends(require_teacher)):
+    """撤销打回：窗口回到场次原本的结束时间。"""
+    assignment = _get_owned_assignment(db, teacher, assignment_id)
+    row = db.get(AssignmentRetry, (assignment.id, student_id))
+    if row is None:
+        raise APIError(404, "RETRY_NOT_FOUND", "该学生没有被打回重做")
+    db.delete(row)
+    log_audit(db, teacher, "assignment_retry_cancel", "assignment", assignment.id,
+              {"student_id": student_id})
+    db.commit()
+    return {"ok": True}
 
 
 @router.get("/submissions/{submission_id}", response_model=schemas.SubmissionDetailOut)
@@ -548,11 +724,8 @@ def patch_manual_score(submission_id: int, body: schemas.ManualScorePatch,
 
 
 def _requested_student_ids(raw: list[int]) -> list[int]:
-    """去重保序；空选择在写库之前就拦下。"""
-    ids = list(dict.fromkeys(raw))
-    if not ids:
-        raise APIError(422, "EMPTY_SELECTION", "未选择任何学生")
-    return ids
+    """去重保序；空选择在写库之前就拦下（共享实现见 groups_svc.requested_student_ids）。"""
+    return groups_svc.requested_student_ids(raw)
 
 
 def _my_student_ids(db: Session, teacher_id: int) -> set[int]:
@@ -572,16 +745,10 @@ def _teachable_group_ids(db: Session, teacher_id: int) -> set[int]:
 def _bind_students(db: Session, teacher: User, student_ids: list[int], source: str) -> int:
     """幂等拉入名单并写审计（层 3 的唯一写路径），返回实际新增条数。
 
-    权限校验由调用方在写库之前完成，保证「先校验后写入」的单事务语义。
+    0.4.0 F3 起实现提炼到 groups_svc.bind_manual_students，与 admin 代加共用；
+    行为（幂等、审计同事务、提交时机）与原实现一致。
     """
-    existing = _my_student_ids(db, teacher.id)
-    added = [sid for sid in student_ids if sid not in existing]
-    for sid in added:
-        db.add(TeacherStudent(teacher_id=teacher.id, student_id=sid))
-    log_audit(db, teacher, "teacher_student_bind", "teacher", teacher.id,
-              {"count": len(added), "student_ids": added, "source": source})
-    db.commit()
-    return len(added)
+    return groups_svc.bind_manual_students(db, teacher.id, student_ids, teacher, source)
 
 
 @router.get("/students", response_model=list[schemas.BoundStudentOut])

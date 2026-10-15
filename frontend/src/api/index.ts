@@ -16,6 +16,10 @@ import type {
   BatchResetMode,
   BatchResetResult,
   AuditLogPage,
+  StudentReminderItem,
+  RemindResult,
+  RetryResult,
+  AuditLogFilters,
   CreateTeacherBody,
   CreateStudentBody,
   ImportResult,
@@ -142,9 +146,46 @@ export function resetTeacherPassword(id: number): Promise<TempCredential> {
   return request<TempCredential>(`/admin/teachers/${id}/reset_password`, { method: 'POST' });
 }
 
+/** 0.4.1 F3：批量导入教师，列 = 工号｜姓名｜可教组别（与学生导入同一套解析与响应）。 */
+export function importTeachers(file: File): Promise<ImportResult> {
+  const form = new FormData();
+  form.append('file', file);
+  return request<ImportResult>('/admin/teachers/import', { method: 'POST', form });
+}
+
+/** 0.4.1 F3：导出教师名单，`q` 与列表接口同口径。 */
+export function exportTeachers(params: { format: 'xlsx' | 'csv'; q?: string }): Promise<void> {
+  return downloadBlob(
+    `/admin/teachers/export${queryString({
+      format: params.format,
+      q: params.q?.trim(),
+    })}`,
+    params.format === 'csv' ? '教师名单.csv' : '教师名单.xlsx',
+  );
+}
+
 /** BD-06：admin 直绑写接口（PUT）已删除，这里只保留只读查看。 */
 export function getTeacherStudents(id: number): Promise<TeacherRoster> {
   return request<TeacherRoster>(`/admin/teachers/${id}/students`);
+}
+
+/**
+ * 0.4.0 F3：管理员替教师添加临时学生（层 3 手动绑定，`source` 仍是 manual）。
+ * 幂等；无效 / 非学生 / 停用 id 整批 422 INVALID_STUDENT_IDS，空选 422 EMPTY_SELECTION。
+ */
+export function adminBindTempStudents(teacherId: number, studentIds: number[]): Promise<BatchResult> {
+  return request<BatchResult>(`/admin/teachers/${teacherId}/students/bind`, {
+    method: 'POST',
+    body: { student_ids: studentIds },
+  });
+}
+
+/** 0.4.0 F3：管理员替教师移出临时学生；只删手动绑定行，组别派生 id 整批 422 ROSTER_DERIVED_STUDENT。 */
+export function adminUnbindTempStudents(teacherId: number, studentIds: number[]): Promise<BatchResult> {
+  return request<BatchResult>(`/admin/teachers/${teacherId}/students/unbind`, {
+    method: 'POST',
+    body: { student_ids: studentIds },
+  });
 }
 
 /** BD-02：读取该教师可教的组别（层 2）。 */
@@ -230,6 +271,11 @@ export function adminBatchActive(studentIds: number[], isActive: boolean): Promi
 }
 
 /* ---------- admin: 审计日志（AU-05 / AU-06） ---------- */
+
+/** 动作 / 对象类型的候选项与中文名，服务端字典是唯一真相（0.4.1 FIX）。 */
+export function getAuditLogFilters(): Promise<AuditLogFilters> {
+  return request<AuditLogFilters>('/admin/audit_logs/filters');
+}
 
 /** 只读、按 created_at 倒序；分页靠 `limit` / `offset`，`total` 判断是否还有下一页。 */
 export function listAuditLogs(params: {
@@ -411,6 +457,22 @@ export function deleteTeacherProblem(id: number): Promise<void> {
   return request<void>(`/teacher/problems/${id}`, { method: 'DELETE' });
 }
 
+/** 批量设置题目分组（0.4.0 F1）；任一题不属于本人 → 整批 403 且零写入。 */
+export function batchGroupTeacherProblems(problemIds: number[], groupName: string): Promise<BatchResult> {
+  return request<BatchResult>('/teacher/problems/batch_group', {
+    method: 'POST',
+    body: { problem_ids: problemIds, group_name: groupName },
+  });
+}
+
+/** 批量删除题目（0.4.0 F1）；任一题被场次引用 → 整批 409 PROBLEM_IN_USE，message 列出题名。 */
+export function batchDeleteTeacherProblems(problemIds: number[]): Promise<BatchResult> {
+  return request<BatchResult>('/teacher/problems/batch_delete', {
+    method: 'POST',
+    body: { problem_ids: problemIds },
+  });
+}
+
 /** 保存题目草稿（每题仅一份，新草稿覆盖旧草稿）；正式保存成功后由服务端清空。 */
 export function saveProblemDraft(id: number, draft: ProblemDraft): Promise<void> {
   return request<void>(`/teacher/problems/${id}/draft`, { method: 'PUT', body: draft });
@@ -476,6 +538,32 @@ export function exportAssignmentStudents(id: number): Promise<void> {
   return downloadBlob(`/teacher/assignments/${id}/export?tz_offset=${dayjs().utcOffset()}`, `学生成绩-${id}.xlsx`);
 }
 
+/**
+ * 提醒学生交作业（0.4.1 F6）：单点传一个 id，批量传多个。
+ * 已读过提醒的学生会被重新计入 created（再次弹窗）；仍未读的计入 skipped。
+ */
+export function remindAssignmentStudents(assignmentId: number, studentIds: number[]): Promise<RemindResult> {
+  return request<RemindResult>(`/teacher/assignments/${assignmentId}/remind`, {
+    method: 'POST',
+    body: { student_ids: studentIds },
+  });
+}
+
+/**
+ * 打回重做（0.4.1 F9）：把学生的提交窗口延长到 `deadline`（UTC 串），期内不限次数。
+ * `studentIds` 留空 = 由服务端按及格线自动挑不及格的学生。
+ */
+export function retryAssignmentStudents(assignmentId: number, deadline: string, studentIds: number[] = []): Promise<RetryResult> {
+  return request<RetryResult>(`/teacher/assignments/${assignmentId}/retry`, {
+    method: 'POST',
+    body: { student_ids: studentIds, deadline },
+  });
+}
+
+export function cancelAssignmentRetry(assignmentId: number, studentId: number): Promise<void> {
+  return request<void>(`/teacher/assignments/${assignmentId}/retry/${studentId}`, { method: 'DELETE' });
+}
+
 /* ---------- teacher: submissions ---------- */
 
 export function getTeacherSubmission(id: number): Promise<TeacherSubmissionDetail> {
@@ -513,4 +601,13 @@ export function createSubmission(assignmentId: number, problemId: number, code_t
 
 export function getStudentSubmission(id: number): Promise<StudentSubmissionDetail> {
   return request<StudentSubmissionDetail>(`/student/submissions/${id}`);
+}
+
+/** 未读的「提醒交作业」，登录后弹窗用；读失败不阻塞页面。 */
+export function listStudentReminders(): Promise<StudentReminderItem[]> {
+  return request<StudentReminderItem[]>('/student/reminders');
+}
+
+export function dismissStudentReminder(id: number): Promise<void> {
+  return request<void>(`/student/reminders/${id}/dismiss`, { method: 'POST' });
 }

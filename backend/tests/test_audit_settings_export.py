@@ -12,6 +12,8 @@
 - ``GET /admin/audit_logs/export`` → xlsx，列
   ``时间 / 操作人 / 工号 / 动作 / 对象类型 / 对象 ID / 详情 JSON``，中文名取自
   ``services.audit`` 的标签表；超过 50000 行 422 ``AUDIT_EXPORT_TOO_LARGE``。
+- ``GET /admin/audit_logs/filters``（0.4.1 FIX-1）把同一份标签表作为筛选候选下发，
+  顺序即字典顺序；前端不再自带一份清单，未加载过的动作也能显示中文名。
 """
 from datetime import datetime, timedelta, timezone
 from io import BytesIO
@@ -25,8 +27,9 @@ from app.core.security import create_token, utcnow_str
 from app.main import app
 from app.models import AuditLog, SiteSetting, User
 from app.services import audit as audit_svc
-from app.services.audit import (AUDIT_EXPORT_HEADER, AUDIT_EXPORT_MAX_ROWS,
-                                AUDIT_RETENTION_MAX_DAYS, AUDIT_RETENTION_MIN_DAYS,
+from app.services.audit import (AUDIT_ACTION_LABELS, AUDIT_EXPORT_HEADER,
+                                AUDIT_EXPORT_MAX_ROWS, AUDIT_RETENTION_MAX_DAYS,
+                                AUDIT_RETENTION_MIN_DAYS, AUDIT_TARGET_LABELS,
                                 log_audit, prune_expired)
 from app.services.export import XLSX_MEDIA_TYPE
 
@@ -34,6 +37,7 @@ PUBLIC_SETTINGS = "/api/settings"
 ADMIN_SETTINGS = "/api/admin/settings"
 AUDIT_URL = "/api/admin/audit_logs"
 EXPORT_URL = "/api/admin/audit_logs/export"
+FILTERS_URL = "/api/admin/audit_logs/filters"
 TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
 
@@ -380,4 +384,32 @@ class TestAuditExport:
     def test_export_is_admin_only(self, client, db, teacher):
         for headers in (bearer(teacher), None):
             resp = client.get(EXPORT_URL, headers=headers) if headers else client.get(EXPORT_URL)
+            assert code_of(resp) in ("FORBIDDEN", "UNAUTHORIZED"), resp.text
+
+
+# ---------- 5. 筛选候选（0.4.1 FIX-1：下拉不再出现裸英文枚举）----------
+
+class TestAuditFilters:
+    def test_returns_whole_label_table_in_declaration_order(self, client, h_admin):
+        resp = client.get(FILTERS_URL, headers=h_admin)
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert [(o["value"], o["label"]) for o in body["actions"]] == list(AUDIT_ACTION_LABELS.items())
+        assert [(o["value"], o["label"]) for o in body["targets"]] == list(AUDIT_TARGET_LABELS.items())
+
+    def test_every_option_is_labelled_in_chinese(self, client, h_admin):
+        body = client.get(FILTERS_URL, headers=h_admin).json()
+        options = body["actions"] + body["targets"]
+        assert options, "候选字典不应为空"
+        assert all(o["label"] != o["value"] for o in options), \
+            [o["value"] for o in options if o["label"] == o["value"]]
+
+    def test_available_even_while_audit_disabled(self, client, db, h_admin):
+        # 候选来自代码里的字典，与开关无关；关闭审计时页面仍能渲染筛选框
+        client.put(ADMIN_SETTINGS, headers=h_admin, json={"audit_enabled": False})
+        assert client.get(FILTERS_URL, headers=h_admin).status_code == 200
+
+    def test_is_admin_only(self, client, db, teacher):
+        for headers in (bearer(teacher), None):
+            resp = client.get(FILTERS_URL, headers=headers) if headers else client.get(FILTERS_URL)
             assert code_of(resp) in ("FORBIDDEN", "UNAUTHORIZED"), resp.text
