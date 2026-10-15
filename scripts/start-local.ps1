@@ -27,14 +27,14 @@ $JudgeName   = 'qinglan-judge'
 $JudgeImage  = 'qinglan-go-judge:v1.12.3-gcc'
 $ComposeFile = Join-Path $Root 'docker\compose.yml'
 
-# 默认端口：容器内 go-judge 固定监听 5050，Vite 默认 5173。
-# Windows 上这两个端口常被系统整段保留（绑定报 EACCES 而非"端口被占用"，netstat 查不到占用者），
-# 此时脚本自动顺延到下一个可用端口，实际值打印在汇总里，并写入 $PortFile 供手动起服务时复用。
+# 默认端口：容器内 go-judge 固定监听 5050，后端 API 8000，Vite 默认 5173。
+# Windows 上这些端口常被系统整段保留（绑定报 EACCES / WinError 10013 而非"端口被占用"，
+# netstat 查不到占用者），此时脚本自动顺延到下一个可用端口，实际值打印在汇总里，
+# 并写入 $PortFile 供手动起服务时复用。
 $JudgeDefaultPort    = 5050
+$ApiDefaultPort      = 8000
 $FrontendDefaultPort = 5173
 $PortFile            = Join-Path $Backend 'data\dev-ports.json'
-
-$ApiUrl = 'http://127.0.0.1:8000'
 
 function Write-Step($m) { Write-Host "`n==> $m" -ForegroundColor Cyan }
 function Write-Ok($m)   { Write-Host "    [ok] $m" -ForegroundColor Green }
@@ -103,10 +103,10 @@ function Get-RecordedPort([string]$Key) {
     } catch { 0 }
 }
 
-function Save-DevPorts([int]$Judge, [int]$Front) {
+function Save-DevPorts([int]$Judge, [int]$Front, [int]$Api) {
     $dir = Split-Path -Parent $PortFile
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-    @{ judge = $Judge; frontend = $Front } | ConvertTo-Json -Compress |
+    @{ judge = $Judge; frontend = $Front; api = $Api } | ConvertTo-Json -Compress |
         Set-Content -Path $PortFile -Encoding utf8NoBOM
 }
 
@@ -279,11 +279,23 @@ if (Wait-Http "$JudgeUrl/version" 20) {
 }
 
 # ---------- 3. 后端 API ----------
-Write-Step '启动后端 API (8000)'
-if (Test-PortListening 8000) {
-    Write-Skip '8000 已有服务，跳过（要重启请先跑 stop-local.ps1）'
+# 8000 落在系统保留段时同样绑不上（uvicorn 直接 WinError 10013 退出），所以这里也走顺延。
+# 先认已在监听的端口，避免把上一个实例还在跑的情况误判成"端口不可用"再起一个。
+$RecApi = Get-RecordedPort 'api'
+if (Test-PortListening $ApiDefaultPort) {
+    $ApiPort = $ApiDefaultPort
+} elseif ($RecApi -gt 0 -and (Test-PortListening $RecApi)) {
+    $ApiPort = $RecApi                          # 上次顺延后的实例还在跑，沿用
 } else {
-    $uv = "-m uvicorn app.main:app --host 127.0.0.1 --port 8000" + (-not $NoReload ? ' --reload' : '')
+    $ApiPort = Resolve-DevPort -Default $ApiDefaultPort -Recorded $RecApi -Avoid @($JudgeHostPort)
+}
+$ApiUrl = "http://127.0.0.1:$ApiPort"
+
+Write-Step "启动后端 API ($ApiPort)"
+if (Test-PortListening $ApiPort) {
+    Write-Skip "$ApiPort 已有服务，跳过（要重启请先跑 stop-local.ps1）"
+} else {
+    $uv = "-m uvicorn app.main:app --host 127.0.0.1 --port $ApiPort" + (-not $NoReload ? ' --reload' : '')
     # -u 关闭 python 输出缓冲：否则 -Headless 重定向到文件时日志会卡在块缓冲里不落盘
     Start-ServiceProcess 'backend' "Set-Location '$Backend'; & '$Python' -u $uv"
     if (Wait-Http "$ApiUrl/docs" 45) {
@@ -292,6 +304,10 @@ if (Test-PortListening 8000) {
         Write-Note $(if ($Headless) { "后端未就绪，看 $LogDir\backend.err.log" } else { '后端未就绪，看 qinglan-backend 窗口' })
     }
 }
+if ($ApiPort -ne $ApiDefaultPort) {
+    Write-Note "默认端口 $ApiDefaultPort 被系统保留，已自动改用 $ApiPort（前端代理靠 $PortFile 的 api 字段跟随）"
+}
+Save-DevPorts -Judge $JudgeHostPort -Front (Get-RecordedPort 'frontend') -Api $ApiPort
 
 # ---------- 4. 判题 worker ----------
 Write-Step '启动判题 worker'
@@ -313,10 +329,10 @@ if (Test-PortListening $FrontendDefaultPort) {
 } elseif ($RecFrontend -and (Test-PortListening $RecFrontend)) {
     $FrontendPort = $RecFrontend                       # 上次顺延后的实例还在跑，别另起一个
 } else {
-    $FrontendPort = Resolve-DevPort -Default $FrontendDefaultPort -Recorded $RecFrontend -Avoid @($JudgeHostPort)
+    $FrontendPort = Resolve-DevPort -Default $FrontendDefaultPort -Recorded $RecFrontend -Avoid @($JudgeHostPort, $ApiPort)
 }
 $FrontendUrl = "http://localhost:$FrontendPort"
-Save-DevPorts -Judge $JudgeHostPort -Front $FrontendPort   # vite.config.ts 读它，必须先写再起
+Save-DevPorts -Judge $JudgeHostPort -Front $FrontendPort -Api $ApiPort   # vite.config.ts 读它，必须先写再起
 
 if ($SkipFrontend) {
     Write-Skip "按参数跳过前端（$FrontendUrl）"
@@ -332,7 +348,7 @@ if ($SkipFrontend) {
     } elseif (Wait-Http "http://localhost:$($FrontendPort + 1)/" 5) {
         $FrontendPort = $FrontendPort + 1
         $FrontendUrl  = "http://localhost:$FrontendPort"   # Vite 端口被占时会自动顺延
-        Save-DevPorts -Judge $JudgeHostPort -Front $FrontendPort
+        Save-DevPorts -Judge $JudgeHostPort -Front $FrontendPort -Api $ApiPort
         Write-Ok "前端改用 $FrontendUrl"
     } else {
         Write-Note $(if ($Headless) { "前端未就绪，看 $LogDir\frontend.out.log" } else { '前端未就绪，看 qinglan-frontend 窗口' })
@@ -350,11 +366,12 @@ Write-Host @"
     $stopHint
 "@ -ForegroundColor Gray
 
-if ($JudgeHostPort -ne $JudgeDefaultPort -or $FrontendPort -ne $FrontendDefaultPort) {
+if ($JudgeHostPort -ne $JudgeDefaultPort -or $FrontendPort -ne $FrontendDefaultPort -or $ApiPort -ne $ApiDefaultPort) {
     Write-Host @"
-    注意    默认端口 $JudgeDefaultPort / $FrontendDefaultPort 被系统保留段占了，本次实际用
-            沙箱 $JudgeHostPort / 前端 $FrontendPort，已记在 backend\data\dev-ports.json
-            （后端与前端都会自动读它，手动起服务不用额外传端口）
+    注意    默认端口里有被系统保留段占掉的，本次实际用
+            沙箱 $JudgeHostPort / 后端 $ApiPort / 前端 $FrontendPort，已记在 backend\data\dev-ports.json
+            （前端代理与沙箱地址都会自动读它；手动起后端要跟着换端口：
+              $Python -u -m uvicorn app.main:app --host 127.0.0.1 --port $ApiPort --reload）
 "@ -ForegroundColor Yellow
 }
 
