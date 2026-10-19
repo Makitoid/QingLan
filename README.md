@@ -9,7 +9,7 @@
   <img alt="React 18" src="https://img.shields.io/badge/React-18-61dafb.svg"/>
   <img alt="SQLite" src="https://img.shields.io/badge/DB-SQLite_(WAL)-003b57.svg"/>
   <img alt="main 分支最新版本" src="https://img.shields.io/github/package-json/v/Makitoid/QingLan/main?filename=frontend%2Fpackage.json&label=main&color=2ea44f"/>
-  <img alt="dev 分支最新版本" src="https://img.shields.io/github/package-json/v/Makitoid/QingLan/dev-0.3.x?filename=frontend%2Fpackage.json&label=dev&color=fb8c00"/>
+  <img alt="dev 分支最新版本" src="https://img.shields.io/github/package-json/v/Makitoid/QingLan/0.5.x?filename=frontend%2Fpackage.json&label=dev&color=fb8c00"/>
 </p>
 
 ---
