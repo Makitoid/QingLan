@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -317,7 +317,7 @@ class PasswordChangeRequest(BaseModel):
 
 
 class ProblemCreate(BaseModel):
-    title: str
+    title: str = Field(min_length=1, max_length=200)
     description: str
     input_format: str
     output_format: str
@@ -328,16 +328,23 @@ class ProblemCreate(BaseModel):
     group_name: str | None = Field(default=None, max_length=50)
 
 
+# H-04：Create 与 Update 共用同一组资源上限，避免「更新路径比创建路径少一层校验」。
+# 抽成共享常量而不是复制 Field，是为了以后调边界只改一处。
+ProblemTimeLimitMs = Annotated[int, Field(ge=50, le=30000)]
+ProblemMemoryLimitMb = Annotated[int, Field(ge=16, le=2048)]
+ProblemTitle = Annotated[str, Field(min_length=1, max_length=200)]
+
+
 class ProblemUpdate(BaseModel):
-    title: str | None = None
+    title: ProblemTitle | None = None
     description: str | None = None
     input_format: str | None = None
     output_format: str | None = None
-    time_limit_ms: int | None = None
-    memory_limit_mb: int | None = None
+    time_limit_ms: ProblemTimeLimitMs | None = None
+    memory_limit_mb: ProblemMemoryLimitMb | None = None
     compare_mode: str | None = None
     float_eps: float | None = None
-    group_name: str | None = None
+    group_name: str | None = Field(default=None, max_length=50)
 
 
 class ProblemBatchRequest(BaseModel):
@@ -395,7 +402,8 @@ class TestCaseUpdate(BaseModel):
     input: str | None = None
     expected: str | None = None
     is_sample: bool | None = None
-    weight: int | None = None
+    # L-04：与 TestCaseCreate 对齐，权重不能为负（也不会出现全 0 导致除零）
+    weight: int | None = Field(default=None, ge=1)
 
 
 class TestCaseOut(ORMModel):

@@ -20,7 +20,8 @@ from sqlalchemy import text
 
 from app.core.security import create_token
 from app.main import app
-from app.models import AssignmentProblem, AuditLog, Problem, SubmissionResult, User
+from app.models import (AssignmentProblem, AuditLog, Problem, SubmissionResult,
+                        TeacherStudent, User)
 
 from .conftest import make_submission
 
@@ -211,6 +212,9 @@ class TestStudentProblemsVerdict:
 
     def test_student_problems_returns_latest_verdict(self, client, db, teacher, h_teacher,
                                                      assignment, problem, student):
+        # M-02：逐题下钻只对本场次受众开放，先把该生加入教师名单
+        db.add(TeacherStudent(teacher_id=teacher.id, student_id=student.id))
+        db.commit()
         # 第二题只进题单、不提交：验证「未交题 verdict=None」。
         p2 = Problem(title="第二题", description="", input_format="", output_format="",
                      time_limit_ms=1000, memory_limit_mb=256, compare_mode="trim",

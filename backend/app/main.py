@@ -7,7 +7,9 @@ from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from .api import admin, auth, student, teacher
+from .core import config
 from .core.db import SessionLocal
+from .core.middleware import BodySizeLimitMiddleware, SecurityHeadersMiddleware
 from .core.security import APIError
 from .services.audit import prune_expired
 
@@ -23,7 +25,20 @@ async def lifespan(_: FastAPI):
     yield
 
 
-app = FastAPI(title="青蓝 QingLan API", version="1.0", lifespan=lifespan)
+# L-01：生产默认关闭 /docs、/redoc、/openapi.json，避免登录前把全部路由与
+# 请求模型摊开；APP_ENV=dev 时保留，方便本机调试。
+app = FastAPI(
+    title="青蓝 QingLan API",
+    version="1.0",
+    lifespan=lifespan,
+    docs_url="/docs" if config.DOCS_ENABLED else None,
+    redoc_url="/redoc" if config.DOCS_ENABLED else None,
+    openapi_url="/openapi.json" if config.DOCS_ENABLED else None,
+)
+
+# M-04：ASGI 层请求体上限（含 chunked 请求）
+app.add_middleware(BodySizeLimitMiddleware, max_bytes=config.MAX_REQUEST_BYTES)
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 @app.exception_handler(APIError)
@@ -31,6 +46,7 @@ async def api_error_handler(request: Request, exc: APIError):
     return JSONResponse(
         status_code=exc.status_code,
         content={"code": exc.code, "message": exc.message},
+        headers=exc.headers or None,
     )
 
 

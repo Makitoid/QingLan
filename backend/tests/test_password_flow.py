@@ -172,10 +172,13 @@ class TestForcedChangeGuard:
         headers = auth_of(user)
         resp = client.post("/api/auth/password", headers=headers,
                            json={"old_password": INITIAL, "new_password": NEW_PWD})
-        assert resp.status_code == 204
+        assert resp.status_code == 200, resp.text
         db.expire_all()
         assert db.get(User, user.id).must_change_password == 0
-        assert client.get("/api/student/assignments", headers=headers).status_code == 200
+        # M-01：改密后旧令牌立即失效，但响应会下发一枚新令牌，当前会话不中断
+        assert client.get("/api/student/assignments", headers=headers).status_code == 401
+        new_headers = {"Authorization": f"Bearer {resp.json()['token']}"}
+        assert client.get("/api/student/assignments", headers=new_headers).status_code == 200
 
     def test_anonymous_settings_still_open(self, client, db):
         # 登录页背景/主题色是匿名接口，不能被拦截牵连

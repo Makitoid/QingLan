@@ -1,0 +1,14 @@
+.git
+.gitignore
+.qoder
+.secscan
+logs
+backend/.venv
+backend/.tmp-verify
+backend/data
+frontend/node_modules
+frontend/dist
+**/__pycache__
+**/*.pyc
+*.log
+*_TODO.md

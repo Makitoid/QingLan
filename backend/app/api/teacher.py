@@ -510,6 +510,10 @@ def assignment_student_problems(assignment_id: int, student_id: int,
     student = db.get(User, student_id)
     if student is None or student.role != "student":
         raise APIError(404, "STUDENT_NOT_FOUND", "学生不存在")
+    # M-02：逐题成绩只对「本场次受众」开放，避免教师按自增 id 枚举读取
+    # 其他班级学生的场次成绩。与 /students 列表同一口径（groups_svc.audience_students）。
+    if student.id not in {s.id for s in groups_svc.audience_students(db, assignment)}:
+        raise APIError(404, "STUDENT_NOT_FOUND", "学生不存在")
 
     ordered = stats.assignment_problems_ordered(db, assignment.id)
     problem_ids = [ap.problem_id for ap in ordered]

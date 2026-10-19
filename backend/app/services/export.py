@@ -24,6 +24,25 @@ TIME_FMT = "%Y-%m-%d %H:%M:%S"
 
 MISSING_OPENPYXL = APIError(500, "OPENPYXL_MISSING", "服务器未安装 openpyxl，无法处理 Excel 文件")
 
+# H-02：电子表格公式注入。以这些字符开头的用户可控文本（题目标题、姓名、分组名等）
+# 会被 Excel/Sheets 当公式求值；CSV 侧加单引号前缀，XLSX 侧显式写成文本单元格。
+_FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r", "\n")
+
+
+def neutralize_csv_cell(value):
+    if isinstance(value, str) and value.startswith(_FORMULA_PREFIXES):
+        return "'" + value
+    return value
+
+
+def append_text_safe_row(ws, row) -> None:
+    """追加一行并强制字符串单元格按文本落盘，避免 openpyxl 把 `=` 开头识别成公式。"""
+    ws.append(row)
+    for cell in ws[ws.max_row]:
+        if isinstance(cell.value, str):
+            cell.data_type = "s"
+            cell.number_format = "@"
+
 
 def load_openpyxl():
     try:
@@ -84,7 +103,7 @@ def build_assignment_students_xlsx(assignment_title: str, rows: list[dict], tz_o
     ws.title = sheet_title(assignment_title)
 
     columns = _problem_columns(rows)
-    ws.append([*XLSX_FIXED_HEADER, *(col["title"] for col in columns), XLSX_TIME_HEADER])
+    append_text_safe_row(ws, [*XLSX_FIXED_HEADER, *(col["title"] for col in columns), XLSX_TIME_HEADER])
     for cell in ws[1]:
         cell.font = Font(bold=True)
     ws.freeze_panes = "A2"
@@ -114,7 +133,7 @@ def build_assignment_students_xlsx(assignment_title: str, rows: list[dict], tz_o
             for col in columns
         )
         cells.append(to_local(row.get("last_submitted_at"), tz_offset))
-        ws.append(cells)
+        append_text_safe_row(ws, cells)
 
     from io import BytesIO
     buf = BytesIO()
@@ -175,14 +194,14 @@ def _write_sheet(title: str, header: list[str], widths: list[int], cells_rows: l
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = title
-    ws.append(header)
+    append_text_safe_row(ws, header)
     for cell in ws[1]:
         cell.font = Font(bold=True)
     ws.freeze_panes = "A2"
     for idx, width in enumerate(widths, start=1):
         ws.column_dimensions[get_column_letter(idx)].width = width
     for cells in cells_rows:
-        ws.append(cells)
+        append_text_safe_row(ws, cells)
 
     buf = BytesIO()
     wb.save(buf)
@@ -190,15 +209,15 @@ def _write_sheet(title: str, header: list[str], widths: list[int], cells_rows: l
 
 
 def _write_csv(header: list[str], cells_rows: list[list]) -> bytes:
-    """CSV 带 UTF-8 BOM，Excel 双击打开不乱码。"""
+    """CSV 带 UTF-8 BOM，Excel 双击打开不乱码；公式前缀字符先中和（H-02）。"""
     from csv import writer as csv_writer
     from io import StringIO
 
     buf = StringIO()
     w = csv_writer(buf)
-    w.writerow(header)
+    w.writerow([neutralize_csv_cell(v) for v in header])
     for cells in cells_rows:
-        w.writerow(cells)
+        w.writerow([neutralize_csv_cell(v) for v in cells])
     return buf.getvalue().encode("utf-8-sig")
 
 

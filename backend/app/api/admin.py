@@ -25,6 +25,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from ..core import config
 from ..core.db import get_db
@@ -81,6 +82,22 @@ class BgImageOut(BaseModel):
 
 class SuccessOut(BaseModel):
     success: bool
+
+
+async def read_upload_limited(file: UploadFile, max_bytes: int, message: str) -> bytes:
+    """M-04：分块读取并累计判限，避免 `await file.read()` 先把整份文件放进内存。"""
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await file.read(config.UPLOAD_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > max_bytes:
+            raise APIError(413, "FILE_TOO_LARGE", message)
+        chunks.append(chunk)
+    return b"".join(chunks)
+
 
 
 def now_str() -> str:
@@ -675,9 +692,10 @@ def process_import_rows(db: Session, actor: User, rows: list[ImportRow],
 @router.post("/admin/students/import", response_model=ImportResult)
 async def import_students(file: UploadFile = File(...), db: Session = Depends(get_db),
                           admin: User = Depends(require_admin)):
-    raw = await file.read()
+    raw = await read_upload_limited(file, MAX_IMPORT_BYTES, "导入文件超过 5MB 限制")
     rows, failures = parse_import_file(file.filename or "", raw)
-    return process_import_rows(db, admin, rows, failures)
+    # M-05：解析与逐生 bcrypt 都是阻塞操作，放线程池，避免大批量导入卡住事件循环
+    return await run_in_threadpool(process_import_rows, db, admin, rows, failures)
 
 
 # ---------- 教师名单导入 / 导出（0.4.1 F3，与学生侧同构）----------
@@ -748,11 +766,11 @@ def process_teacher_import_rows(db: Session, actor: User, rows: list[ImportRow],
 @router.post("/admin/teachers/import", response_model=ImportResult)
 async def import_teachers(file: UploadFile = File(...), db: Session = Depends(get_db),
                           admin: User = Depends(require_admin)):
-    raw = await file.read()
+    raw = await read_upload_limited(file, MAX_IMPORT_BYTES, "导入文件超过 5MB 限制")
     rows, failures = parse_import_file(file.filename or "", raw,
                                        columns=TEACHER_IMPORT_COLUMNS,
                                        header_keys=TEACHER_HEADER_FIRST_CELLS)
-    return process_teacher_import_rows(db, admin, rows, failures)
+    return await run_in_threadpool(process_teacher_import_rows, db, admin, rows, failures)
 
 
 @router.get("/admin/teachers/export")
@@ -1140,9 +1158,7 @@ async def upload_bg_image(file: UploadFile = File(...), mode: str = "light", db:
     ext = Path(file.filename or "").suffix.lower()
     if ext not in ALLOWED_BG_EXTS:
         raise APIError(415, "UNSUPPORTED_FILE_TYPE", "仅支持 jpg/png/webp 格式")
-    raw = await file.read()
-    if len(raw) > MAX_BG_BYTES:
-        raise APIError(413, "FILE_TOO_LARGE", "图片超过 5MB 限制")
+    raw = await read_upload_limited(file, MAX_BG_BYTES, "图片超过 5MB 限制")
     if not raw:
         raise APIError(422, "EMPTY_FILE", "图片文件为空")
     s = get_or_create_settings(db)

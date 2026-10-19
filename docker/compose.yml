@@ -11,6 +11,7 @@ services:
       - ../.env
     environment:
       DATA_DIR: /app/backend/data
+      APP_ENV: ${APP_ENV:-prod}
     volumes:
       - ../backend/data:/app/backend/data
     networks:
@@ -26,6 +27,7 @@ services:
       - ../.env
     environment:
       DATA_DIR: /app/backend/data
+      APP_ENV: ${APP_ENV:-prod}
       GO_JUDGE_URL: http://go-judge:5050
     volumes:
       - ../backend/data:/app/backend/data

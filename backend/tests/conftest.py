@@ -1,10 +1,14 @@
 import os
+import secrets
 import sys
 import tempfile
 from pathlib import Path
 
 _TMP_DATA = tempfile.mkdtemp(prefix="qinglan-test-data-")
 os.environ["DATA_DIR"] = _TMP_DATA
+# C-02：测试环境等价于 dev，但显式给一个随机密钥，避免依赖源码默认值
+os.environ["APP_ENV"] = "test"
+os.environ["JWT_SECRET"] = secrets.token_hex(32)
 
 _BACKEND_DIR = Path(__file__).resolve().parents[1]
 if str(_BACKEND_DIR) not in sys.path:
@@ -14,6 +18,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from app.core.db import SessionLocal, engine
+from app.core.throttle import reset_all as reset_login_throttle
 from app.models import (Assignment, AssignmentProblem, Base, Problem,
                         SiteSetting, Submission, TestCase, User)
 from app.services.audit import invalidate_audit_cache
@@ -26,6 +31,7 @@ def db():
     Base.metadata.drop_all(engine)
     Base.metadata.create_all(engine)
     invalidate_audit_cache()
+    reset_login_throttle()
     session = SessionLocal()
     session.add(SiteSetting(id=1, brand_color="#0F6CBD", bg_opacity=0.15))
     session.commit()

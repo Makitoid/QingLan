@@ -1,5 +1,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
+import hashlib
+import hmac
 import secrets
 
 import bcrypt
@@ -20,8 +22,6 @@ PASSWORD_GUARD_ALLOWLIST = frozenset({
     "/api/auth/login",
     "/api/auth/me",
     "/api/auth/password",
-    "/api/settings",
-    "/api/settings/bg_image",
 })
 
 WEAK_PASSWORDS = frozenset({
@@ -41,10 +41,12 @@ WEAK_PASSWORDS = frozenset({
 
 
 class APIError(Exception):
-    def __init__(self, status_code: int, code: str, message: str):
+    def __init__(self, status_code: int, code: str, message: str,
+                 headers: dict[str, str] | None = None):
         self.status_code = status_code
         self.code = code
         self.message = message
+        self.headers = headers or {}
 
 
 def utcnow_str() -> str:
@@ -54,6 +56,18 @@ def utcnow_str() -> str:
 
 def hash_password(password: str) -> str:
     return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt(rounds=12)).decode("utf-8")
+
+
+# L-02：未知用户名也跑一次同成本 bcrypt，避免用响应时间枚举账号。
+# 懒加载：模块导入时不额外付一次 bcrypt，首个未知账号请求后即固定下来。
+_dummy_password_hash: str | None = None
+
+
+def dummy_password_hash() -> str:
+    global _dummy_password_hash
+    if _dummy_password_hash is None:
+        _dummy_password_hash = hash_password("qinglan-dummy-password-for-timing")
+    return _dummy_password_hash
 
 
 def hash_password_many(passwords: list[str], workers: int | None = None) -> list[str]:
@@ -147,10 +161,25 @@ def is_temp_password_expired(password_updated_at: str | None) -> bool:
     return password_updated_at < cutoff
 
 
+def password_fingerprint(user: User) -> str:
+    """M-01：把口令哈希绑进令牌，改密/重置后旧令牌立即失效。
+
+    用 JWT_SECRET 做 HMAC 而不是直接放 bcrypt 哈希：令牌里看不到可离线
+    爆破的口令材料，但口令哈希一变（bcrypt 每次重置都会换盐），指纹随之变化。
+    """
+    digest = hmac.new(
+        config.JWT_SECRET.encode("utf-8"),
+        f"{user.id}:{user.password_hash}".encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return digest[:32]
+
+
 def create_token(user: User) -> str:
     payload = {
         "uid": user.id,
         "role": user.role,
+        "pv": password_fingerprint(user),
         "exp": datetime.now(timezone.utc) + timedelta(hours=config.JWT_EXPIRE_HOURS),
     }
     return jwt.encode(payload, config.JWT_SECRET, algorithm=config.JWT_ALGORITHM)
@@ -177,6 +206,9 @@ def get_current_user(
     user = db.get(User, payload.get("uid"))
     if user is None:
         raise APIError(401, "USER_NOT_FOUND", "用户不存在")
+    if not hmac.compare_digest(str(payload.get("pv") or ""), password_fingerprint(user)):
+        # 改密、管理员重置或旧版令牌（无 pv）统一按失效处理
+        raise APIError(401, "TOKEN_REVOKED", "登录状态已失效，请重新登录")
     if not user.is_active:
         raise APIError(403, "USER_DISABLED", "账号已停用")
     # PW-02：后端强制拦截——未改密的用户只能碰白名单里的接口，业务 API 一律 403。

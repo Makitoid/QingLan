@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 
 import httpx
 
 from ..core import config
+
+logger = logging.getLogger(__name__)
 
 
 class GoJudgeError(RuntimeError):
@@ -46,6 +49,18 @@ def health_check(timeout: float = 5.0) -> bool:
         return resp.status_code == 200
     except httpx.HTTPError:
         return False
+
+
+def delete_file(file_id: str, timeout: float = 5.0) -> None:
+    """M-07：删除 copyOutCached 留在沙箱里的编译产物（失败只记日志，不影响判题结果）。"""
+    if not file_id:
+        return
+    try:
+        resp = httpx.delete(f"{config.GO_JUDGE_URL}/file/{file_id}", timeout=timeout)
+        if resp.status_code not in (200, 204, 404):
+            logger.warning("go-judge delete file %s failed: HTTP %s", file_id, resp.status_code)
+    except httpx.HTTPError as exc:
+        logger.warning("go-judge delete file %s failed: %s", file_id, exc)
 
 
 def _to_run_result(res: dict, output_limit_bytes: int) -> RunResult:

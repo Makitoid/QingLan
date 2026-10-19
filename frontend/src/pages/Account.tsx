@@ -13,7 +13,7 @@ import {
 } from '@fluentui/react-components';
 import { Save24Regular } from '@fluentui/react-icons';
 import { changePassword } from '../api';
-import { ApiError } from '../api/client';
+import { ApiError, setAuth } from '../api/client';
 import { errMessage } from '../components/StateViews';
 import { PageHeader } from '../components/PageHeader';
 import { PasswordField } from '../components/PasswordField';
@@ -60,7 +60,9 @@ export function AccountPage() {
     }
     setBusy(true);
     try {
-      await changePassword(oldPassword, newPassword);
+      // M-01：改密后旧令牌失效，换用后端下发的新令牌继续当前会话
+      const session = await changePassword(oldPassword, newPassword);
+      setAuth(session.token, session.user);
       setOldPassword('');
       setNewPassword('');
       setConfirm('');

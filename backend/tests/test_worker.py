@@ -24,7 +24,7 @@ def rr(status="ok", exit_code=0, signal=None, stdout=b"", stderr=b"", time_ms=10
 
 @pytest.fixture()
 def sandbox(monkeypatch):
-    calls = {"compile": [], "run": []}
+    calls = {"compile": [], "run": [], "deleted": []}
 
     def fake_compile(source, **kwargs):
         calls["compile"].append((source, kwargs))
@@ -37,8 +37,12 @@ def sandbox(monkeypatch):
             return results[len(calls["run"]) - 1]
         return rr()
 
+    def fake_delete(file_id):
+        calls["deleted"].append(file_id)
+
     monkeypatch.setattr(gojudge, "compile_c", fake_compile)
     monkeypatch.setattr(gojudge, "run_program", fake_run)
+    monkeypatch.setattr(gojudge, "delete_file", fake_delete)
     return calls
 
 
@@ -72,6 +76,8 @@ class TestAccepted:
         assert rows[1].score == 75.0
         assert rows[0].time_ms == 10
         assert rows[0].memory_kb == 1024
+        # M-07：判题结束删除沙箱缓存里的编译产物
+        assert sandbox["deleted"] == ["fid-main"]
 
     def test_compile_limits_and_crlf_stripped(self, db, sandbox, assignment, problem, student, cases):
         sandbox["run_results"] = [rr(stdout=b"3\n"), rr(stdout=b"7\n")]
@@ -192,7 +198,7 @@ class TestCompileError:
         sandbox["compile_result"] = (rr(), None)
         sub = judge(db, read_fixture("ac.c"), assignment, problem, student)
         assert sub.status == "failed"
-        assert "fileId" in sub.judge_log
+        assert sub.judge_log == "worker error: JUDGE_INTERNAL_ERROR"
 
 
 class TestFailedPath:
@@ -203,7 +209,8 @@ class TestFailedPath:
         monkeypatch.setattr(gojudge, "compile_c", boom)
         sub = judge(db, read_fixture("ac.c"), assignment, problem, student)
         assert sub.status == "failed"
-        assert "go-judge down" in sub.judge_log
+        # L-03：异常细节只进服务端日志，回给教师的是固定错误码
+        assert sub.judge_log == "worker error: JUDGE_INTERNAL_ERROR"
         assert sub.verdict is None
         assert sub.score is None
 
@@ -221,7 +228,7 @@ class TestFailedPath:
         monkeypatch.setattr(gojudge, "run_program", flaky)
         sub = judge(db, read_fixture("ac.c"), assignment, problem, student)
         assert sub.status == "failed"
-        assert "connection reset" in sub.judge_log
+        assert sub.judge_log == "worker error: JUDGE_INTERNAL_ERROR"
         assert results_of(db, sub) == []
 
 

@@ -12,8 +12,8 @@ import {
   tokens,
 } from '@fluentui/react-components';
 import { LockClosed24Regular } from '@fluentui/react-icons';
-import { changePassword, getMe } from '../api';
-import { updateStoredUser } from '../api/client';
+import { changePassword } from '../api';
+import { setAuth } from '../api/client';
 import { errMessage } from '../components/StateViews';
 import { PageHeader } from '../components/PageHeader';
 import { PasswordField } from '../components/PasswordField';
@@ -66,15 +66,10 @@ export function ChangePasswordPage() {
     }
     setBusy(true);
     try {
-      await changePassword(oldPassword, newPassword);
-      // 清拦截态以服务端为准（PW-02）：`/auth/me` 是唯一能确认 must_change 已落地的只读接口。
-      try {
-        const me = await getMe();
-        updateStoredUser({ must_change_password: me.must_change_password });
-      } catch {
-        updateStoredUser({ must_change_password: false });
-      }
-      navigate(roleHome(user.role), { replace: true });
+      // M-01：改密后旧令牌立即失效，后端在响应里下发新令牌，当前会话继续有效。
+      const session = await changePassword(oldPassword, newPassword);
+      setAuth(session.token, session.user);
+      navigate(roleHome(session.user.role), { replace: true });
     } catch (err) {
       // 400 BAD_OLD_PASSWORD / 422 PASSWORD_POLICY 的中文 message 直接透出。
       setError(errMessage(err));

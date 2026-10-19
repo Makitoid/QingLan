@@ -156,7 +156,7 @@ def build_audit_logs_xlsx(rows: list[dict[str, Any]]) -> bytes:
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = AUDIT_EXPORT_SHEET
-    ws.append(AUDIT_EXPORT_HEADER)
+    export_svc.append_text_safe_row(ws, AUDIT_EXPORT_HEADER)
     for cell in ws[1]:
         cell.font = Font(bold=True)
     ws.freeze_panes = "A2"
@@ -164,7 +164,7 @@ def build_audit_logs_xlsx(rows: list[dict[str, Any]]) -> bytes:
         ws.column_dimensions[get_column_letter(idx)].width = width
 
     for row in rows:
-        ws.append([
+        export_svc.append_text_safe_row(ws, [
             row.get("created_at") or "",
             row.get("actor_name") or "",
             row.get("actor_username") or "",

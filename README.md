@@ -83,7 +83,7 @@ pwsh scripts/stop-local.ps1       # 全部停止
 | 沙箱健康检查 | http://127.0.0.1:5050/version |
 
 默认端口落在 Windows 保留段里时，`start-local.ps1` 会自动顺延并把实际端口打印在汇总里（同时写入 `backend/data/dev-ports.json`，前后端都会读它）。
-| 默认管理员 | `admin` / `admin123`（**首次登录会被强制改密**；新建的师生账号统一初始密码 `12345678`） |
+| 默认管理员 | 本机开发 `admin` / `admin123`（**首次登录会被强制改密**）；生产环境首次启动随机生成并只打印一次（可用 `ADMIN_INITIAL_PASSWORD` 指定）。新建的师生账号统一初始密码 `12345678` |
 
 手动四终端方式、以及沙箱对 cgroup 命名空间的硬性要求，见 [`部署操作指南.md`](部署操作指南.md) 第一部分。
 
@@ -105,7 +105,7 @@ pwsh scripts/stop-local.ps1       # 全部停止
 
 ```bash
 git clone <本仓库> ~/qinglan && cd ~/qinglan
-cp .env.example .env            # JWT_SECRET 用 openssl rand -hex 32 生成
+cp .env.example .env            # 必须把 JWT_SECRET 换成 openssl rand -hex 32 的输出
 docker compose -f docker/compose.yml up -d --build
 docker compose -f docker/compose.yml exec web python scripts/init_admin.py
 ```

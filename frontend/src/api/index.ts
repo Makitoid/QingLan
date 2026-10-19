@@ -115,8 +115,8 @@ export function deleteBgImage(mode: BgMode = 'light'): Promise<SiteSettings> {
 
 /* ---------- account ---------- */
 
-export function changePassword(oldPassword: string, newPassword: string): Promise<void> {
-  return request<void>('/auth/password', {
+export function changePassword(oldPassword: string, newPassword: string): Promise<LoginResponse> {
+  return request<LoginResponse>('/auth/password', {
     method: 'POST',
     body: { old_password: oldPassword, new_password: newPassword },
   });

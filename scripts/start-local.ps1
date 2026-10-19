@@ -17,6 +17,10 @@ param(
 $ErrorActionPreference = 'Stop'
 $ProgressPreference    = 'SilentlyContinue'
 
+# C-02：本机开发允许不配 JWT_SECRET；APP_ENV=dev 时后端会生成本次进程随机密钥，
+# 生产/服务器部署则必须显式配置（缺失即拒绝启动）。
+$env:APP_ENV = 'dev'
+
 # ---------- 路径与常量 ----------
 $Root        = Split-Path -Parent $PSScriptRoot
 $Backend     = Join-Path $Root 'backend'
